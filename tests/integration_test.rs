@@ -204,11 +204,35 @@ impl ApiClient {
             .http_status_as_error(false)
             .build()
             .into();
-        Self {
+        let client = Self {
             base: format!("http://127.0.0.1:{port}/api"),
             agent,
             creds,
-        }
+        };
+        let body = serde_json::json!({ "password": "integration-test-password" });
+        // First-run setup: creates `auth.json` and unlocks the maker manager.
+        let setup_resp = client
+            .agent
+            .post(format!("http://127.0.0.1:{port}/api/auth/setup"))
+            .send_json(&body)
+            .expect("dashboard setup transport error");
+        assert!(
+            setup_resp.status().is_success(),
+            "auth/setup failed: HTTP {}",
+            setup_resp.status()
+        );
+        // Login: sets the session cookie (kept alive by the agent's cookie jar).
+        let login_resp = client
+            .agent
+            .post(format!("http://127.0.0.1:{port}/api/auth/login"))
+            .send_json(&body)
+            .expect("dashboard login transport error");
+        assert!(
+            login_resp.status().is_success(),
+            "auth/login failed: HTTP {}",
+            login_resp.status()
+        );
+        client
     }
 
     fn get<T: DeserializeOwned>(&self, path: &str) -> T {
