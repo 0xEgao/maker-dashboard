@@ -156,8 +156,15 @@ async fn setup(
             .into_response();
     }
 
-    // Refuse to overwrite an existing makers.json (loss-of-data guard).
-    if makers.lock().await.persistence_state_file_exists() {
+    // Refuse to overwrite encrypted state that is present but not loaded. If
+    // the manager is already unlocked, the state is either fresh/empty or a
+    // legacy plaintext file that has been loaded and can be re-saved with the
+    // setup password below.
+    let maker_state_is_locked = {
+        let makers = makers.lock().await;
+        makers.persistence_state_file_exists() && !makers.is_unlocked()
+    };
+    if maker_state_is_locked {
         return (
             StatusCode::CONFLICT,
             Json(ApiResponse::<()>::err(
@@ -203,8 +210,19 @@ async fn setup(
             .into_response();
     }
 
-    // Unlock the maker manager (this also persists an empty makers.json).
-    if let Err(e) = makers.lock().await.unlock(key) {
+    // Initialize maker persistence with the setup key. On a true first run the
+    // manager may already be unlocked with no key, so rotate_enc_key() is the
+    // path that writes the first encrypted makers.json. It also migrates loaded
+    // legacy plaintext state without dropping existing makers.
+    let maker_init_result = {
+        let mut makers = makers.lock().await;
+        if makers.is_unlocked() {
+            makers.rotate_enc_key(Some(key))
+        } else {
+            makers.unlock(key)
+        }
+    };
+    if let Err(e) = maker_init_result {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiResponse::<()>::err(format!(

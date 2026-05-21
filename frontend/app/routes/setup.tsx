@@ -69,13 +69,17 @@ export default function Setup() {
       if (err instanceof ApiError) {
         switch (err.status) {
           case 409:
-            setError(
-              "Dashboard is already initialized. Use the login page instead.",
-            );
-            setTimeout(() => navigate("/login"), 1500);
+            if (err.message.includes("already initialized")) {
+              setError(
+                "Dashboard is already initialized. Use the login page instead.",
+              );
+              setTimeout(() => navigate("/login"), 1500);
+            } else {
+              setError(err.message);
+            }
             break;
           case 400:
-            setError("Password must not be empty.");
+            setError(err.message);
             break;
           default:
             setError("Setup failed. Please try again.");
