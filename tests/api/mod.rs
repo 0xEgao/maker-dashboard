@@ -23,6 +23,7 @@ use maker_dashboard::{
     maker_manager::MakerManager,
 };
 
+mod auth;
 mod fidelity;
 mod makers;
 mod monitoring;
@@ -36,9 +37,7 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 /// is derived, and `MakerManager::unlock` is called so handlers see an
 /// initialized + unlocked dashboard.
 pub fn test_app() -> Router {
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let config_dir =
-        std::env::temp_dir().join(format!("maker-api-test-{}-{}", std::process::id(), n));
+    let config_dir = temp_config_dir();
     if config_dir.exists() {
         std::fs::remove_dir_all(&config_dir).unwrap();
     }
@@ -59,6 +58,11 @@ pub fn test_app() -> Router {
         config_dir: Arc::new(config_dir),
     };
     api_router().with_state(state)
+}
+
+pub fn temp_config_dir() -> std::path::PathBuf {
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("maker-api-test-{}-{}", std::process::id(), n))
 }
 
 /// GET request => (status, response JSON).
