@@ -7,6 +7,7 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::tor_manager::TorManager;
 use crate::utils::log_writer::MakerLogWriter;
 use anyhow::{anyhow, Result};
 use coinswap::bitcoin::Network;
@@ -100,6 +101,8 @@ pub struct MakerManager {
     bitcoind_process: Option<std::process::Child>,
     /// Network bitcoind was started on (e.g. "regtest", "signet")
     bitcoind_network: Option<String>,
+    #[allow(dead_code)]
+    tor_manager: TorManager,
     /// True iff the encryption key has been provided AND configs have been loaded.
     /// `false` between startup and login when `makers.json` exists encrypted but no key is known.
     unlocked: bool,
@@ -111,6 +114,8 @@ impl MakerManager {
 
     /// Creates a new MakerManager with persistence at the given config directory.
     ///
+    /// Loads any previously saved maker configs and re-initializes them (but does NOT start servers).
+    ///
     /// Behavior:
     /// - If `enc_key` is `Some`, attempts to load and re-initialize previously
     ///   saved makers (they are NOT started).
@@ -120,6 +125,27 @@ impl MakerManager {
     ///   the load is deferred. `configs` stays empty and `is_unlocked()` is
     ///   false until [`MakerManager::unlock`] is called with the AES key.
     pub fn new(config_dir: PathBuf, enc_key: Option<[u8; 32]>) -> Result<Self> {
+        let tor_manager = TorManager::detect_or_start(&config_dir).unwrap_or_else(|e| {
+            tracing::warn!(
+                "Tor could not be started: {}. Tor-dependent makers will fail to start.",
+                e
+            );
+            TorManager::noop()
+        });
+        Self::new_with_tor(config_dir, enc_key, tor_manager)
+    }
+
+    /// Creates a MakerManager without starting or detecting Tor. Use in tests only.
+    #[allow(dead_code)]
+    pub fn new_for_testing(config_dir: PathBuf, enc_key: Option<[u8; 32]>) -> Result<Self> {
+        Self::new_with_tor(config_dir, enc_key, TorManager::noop())
+    }
+
+    fn new_with_tor(
+        config_dir: PathBuf,
+        enc_key: Option<[u8; 32]>,
+        tor_manager: TorManager,
+    ) -> Result<Self> {
         let persistence = PersistenceManager::new(config_dir.clone(), enc_key)?;
 
         let mut mgr = Self {
@@ -128,6 +154,7 @@ impl MakerManager {
             persistence,
             bitcoind_process: None,
             bitcoind_network: None,
+            tor_manager,
             unlocked: false,
         };
 
@@ -730,6 +757,11 @@ impl MakerManager {
         Some(child)
     }
 
+    /// Returns how Tor was obtained: "system", "host", or "docker"
+    pub fn tor_source(&self) -> &'static str {
+        self.tor_manager.source_label()
+    }
+
     /// Returns `(running, network)` for the dashboard-managed bitcoind process.
     pub fn bitcoind_status(&mut self) -> (bool, Option<String>) {
         if let Some(ref mut child) = self.bitcoind_process {
@@ -805,7 +837,7 @@ mod tests {
         }
         std::fs::create_dir_all(&config_dir).unwrap();
 
-        let manager = MakerManager::new(config_dir, None).unwrap();
+        let manager = MakerManager::new_for_testing(config_dir, None).unwrap();
         let network_listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let rpc_listener = TcpListener::bind("127.0.0.1:0").unwrap();
 

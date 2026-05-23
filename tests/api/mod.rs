@@ -47,7 +47,8 @@ pub fn test_app() -> Router {
     let auth_config = AuthConfig::new("test-password").expect("AuthConfig::new");
     let enc_key = auth_config.derive_key("test-password").expect("derive_key");
 
-    let mut manager = MakerManager::new(config_dir.clone(), None).expect("MakerManager::new");
+    let mut manager =
+        MakerManager::new_for_testing(config_dir.clone(), None).expect("MakerManager::new");
     manager.unlock(enc_key).expect("MakerManager::unlock");
 
     let state = AppState {

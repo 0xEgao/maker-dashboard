@@ -43,7 +43,7 @@ jobs:
 
       - name: Test container starts and responds
         run: |
-          docker run -d --rm --name test-container -p 3000:3000 \
+          docker run -d --name test-container -p 3000:3000 \
             -e DASHBOARD_HOST=0.0.0.0 -e DASHBOARD_ALLOW_REMOTE=true \
             maker-dashboard:test
           # Wait for the server to be ready
@@ -55,6 +55,7 @@ jobs:
             if [ "$i" -eq 30 ]; then
               echo "Server failed to start"
               docker logs test-container
+              docker rm -f test-container || true
               exit 1
             fi
             sleep 1
@@ -64,6 +65,7 @@ jobs:
             | jq -e '.data.password_exists == false and .data.authenticated == false'; then
             echo "Auth status assertion failed"
             docker logs test-container
+            docker rm -f test-container || true
             exit 1
           fi
-          docker stop test-container || true
+          docker rm -f test-container || true

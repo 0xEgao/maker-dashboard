@@ -4,6 +4,7 @@ mod cli;
 mod maker_manager;
 mod middlewares;
 mod server;
+mod tor_manager;
 mod utils;
 
 use clap::Parser;

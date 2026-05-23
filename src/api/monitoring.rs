@@ -24,7 +24,7 @@ use crate::utils::log_writer::read_last_n_lines;
 use super::{
     dto::{
         ApiResponse, CombinedLogLine, MakerStatus, RpcStatusInfo, SwapHistoryDto, SwapReportDto,
-        UtxoInfo,
+        TorStatusInfo, UtxoInfo,
     },
     AppState,
 };
@@ -41,6 +41,7 @@ pub fn routes() -> Router<AppState> {
         .route("/makers/{id}/data-dir", get(get_data_dir))
         .route("/makers/{id}/rpc-status", get(get_rpc_status))
         .route("/logs/combined", get(get_combined_logs))
+        .route("/tor/status", get(get_tor_status))
 }
 
 /// Get operational status of a maker
@@ -534,6 +535,22 @@ async fn get_combined_logs(
 #[derive(Deserialize)]
 struct LogsQuery {
     lines: Option<usize>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/tor/status",
+    tag = "monitoring",
+    responses(
+        (status = 200, description = "Tor connectivity status", body = ApiResponse<TorStatusInfo>),
+    )
+)]
+pub async fn get_tor_status(State(state): State<AppState>) -> Json<ApiResponse<TorStatusInfo>> {
+    let source = state.makers.lock().await.tor_source();
+    Json(ApiResponse::ok(TorStatusInfo {
+        managed: source != "system",
+        source,
+    }))
 }
 
 /// Get the Tor address of a maker

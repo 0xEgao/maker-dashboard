@@ -105,6 +105,7 @@ impl FromRef<AppState> for Arc<std::path::PathBuf> {
         bitcoind::start,
         bitcoind::stop,
         onboarding::run_startup_check,
+        monitoring::get_tor_status,
         health_check,
     ),
     components(schemas(
@@ -126,6 +127,7 @@ impl FromRef<AppState> for Arc<std::path::PathBuf> {
         dto::StartBitcoindRequest,
         dto::BitcoindStatusInfo,
         dto::CombinedLogLine,
+        dto::TorStatusInfo,
     )),
     tags(
         (name = "makers", description = "Maker management"),

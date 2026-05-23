@@ -6,7 +6,7 @@ import {
   Outlet,
   Navigate,
 } from "react-router-dom";
-import { useEffect, useState, StrictMode } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import "@/app.css";
 
 import Home from "./routes/home";
@@ -15,7 +15,8 @@ import AddMaker from "./routes/addMaker";
 import MakerSetup from "./routes/makersetup";
 import Login from "./routes/login";
 import Setup from "./routes/setup";
-import { auth } from "@/api";
+import { Toast } from "./components/Toast";
+import { auth, monitoring } from "@/api";
 
 interface AuthState {
   passwordExists: boolean | null;
@@ -45,10 +46,6 @@ function useAuthStatus(): { checking: boolean; state: AuthState } {
   return { checking, state };
 }
 
-// AuthLayout: wraps authenticated routes.
-// - no password => /setup
-// - password exists + not authed => /login
-// - password exists + authed => render
 function AuthLayout() {
   const { checking, state } = useAuthStatus();
 
@@ -58,10 +55,6 @@ function AuthLayout() {
   return <Outlet />;
 }
 
-// GuestLayout: wraps /login.
-// - no password => /setup
-// - password exists + authed => /
-// - password exists + not authed => render
 function GuestLayout() {
   const { checking, state } = useAuthStatus();
 
@@ -71,9 +64,6 @@ function GuestLayout() {
   return <Outlet />;
 }
 
-// SetupLayout: wraps /setup.
-// - password exists => /login
-// - no password => render
 function SetupLayout() {
   const { checking, state } = useAuthStatus();
 
@@ -82,8 +72,42 @@ function SetupLayout() {
   return <Outlet />;
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
+function TorStartupToast() {
+  const [torToast, setTorToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (
+      sessionStorage.getItem("tor-toast-shown") ||
+      sessionStorage.getItem("tor-toast-checked")
+    ) {
+      return;
+    }
+
+    auth
+      .status()
+      .then(({ authenticated }) => {
+        if (!authenticated) return null;
+        sessionStorage.setItem("tor-toast-checked", "1");
+        return monitoring.getTorStatus();
+      })
+      .then((status) => {
+        if (!status) return;
+        const { managed, source } = status;
+        if (managed) {
+          const label = source === "embedded" ? "embedded Tor" : "host binary";
+          setTorToast(`Tor started via ${label}`);
+          sessionStorage.setItem("tor-toast-shown", "1");
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  if (!torToast) return null;
+  return <Toast message={torToast} onDismiss={() => setTorToast(null)} />;
+}
+
+function App() {
+  return (
     <BrowserRouter>
       <Routes>
         <Route element={<SetupLayout />}>
@@ -99,6 +123,13 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/makers/:makerId/setup" element={<MakerSetup />} />
         </Route>
       </Routes>
+      <TorStartupToast />
     </BrowserRouter>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
   </StrictMode>,
 );
