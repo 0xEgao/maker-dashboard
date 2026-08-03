@@ -1,0 +1,544 @@
+name: Test Coinswap compatibility
+
+# Receives an exact Coinswap commit from citadel-tech/coinswap. The dashboard
+# build, unit tests, and integration test run sequentially on one Ubuntu
+# runner. A failed stage is reported in a Maker Dashboard issue, deduplicated
+# by Coinswap SHA with <!-- coinswap-compatibility:<sha> -->.
+on:
+  repository_dispatch:
+    types:
+      - coinswap-updated
+  workflow_dispatch:
+    inputs:
+      coinswap_sha:
+        description: Full SHA of a commit on citadel-tech/coinswap master
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: coinswap-compatibility-${{ github.event.client_payload.coinswap_sha || inputs.coinswap_sha || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CLICOLOR: "0"
+  FORCE_COLOR: "0"
+  NO_COLOR: "1"
+  RUST_BACKTRACE: "1"
+  TERM: dumb
+
+jobs:
+  compatibility:
+    name: Build and test against exact Coinswap commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.check.outputs.result }}
+      coinswap_sha: ${{ steps.context.outputs.sha }}
+    steps:
+      - name: Resolve and validate dispatch context
+        id: context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_SHA: ${{ github.event.client_payload.coinswap_sha }}
+          DISPATCH_REF: ${{ github.event.client_payload.coinswap_ref }}
+          DISPATCH_REPOSITORY: ${{ github.event.client_payload.coinswap_repository }}
+          DISPATCH_ACTOR: ${{ github.event.client_payload.triggering_actor }}
+          MANUAL_SHA: ${{ inputs.coinswap_sha }}
+          MANUAL_ACTOR: ${{ github.triggering_actor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${EVENT_NAME}" == "repository_dispatch" ]]; then
+            coinswap_sha="${DISPATCH_SHA}"
+            coinswap_ref="${DISPATCH_REF}"
+            triggering_actor="${DISPATCH_ACTOR}"
+            if [[ "${DISPATCH_REPOSITORY}" != "citadel-tech/coinswap" ]]; then
+              echo "::error::Dispatches are accepted only from citadel-tech/coinswap."
+              exit 1
+            fi
+            if [[ "${coinswap_ref}" != "refs/heads/master" ]]; then
+              echo "::error::Dispatches are accepted only from refs/heads/master."
+              exit 1
+            fi
+          else
+            coinswap_sha="${MANUAL_SHA}"
+            coinswap_ref="refs/heads/master"
+            triggering_actor="${MANUAL_ACTOR}"
+          fi
+
+          if [[ ! "${coinswap_sha}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::coinswap_sha must be a full 40-character hexadecimal Git SHA."
+            exit 1
+          fi
+
+          coinswap_sha="${coinswap_sha,,}"
+          triggering_actor="$(printf '%s' "${triggering_actor}" | tr -cd '[:alnum:]_.-')"
+          triggering_actor="${triggering_actor:0:100}"
+          if [[ -z "${triggering_actor}" ]]; then
+            triggering_actor="unknown"
+          fi
+
+          {
+            echo "sha=${coinswap_sha}"
+            echo "ref=${coinswap_ref}"
+            echo "actor=${triggering_actor}"
+            echo "commit_url=https://github.com/citadel-tech/coinswap/commit/${coinswap_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout Maker Dashboard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: maker-dashboard
+          persist-credentials: false
+
+      - name: Checkout exact Coinswap commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: citadel-tech/coinswap
+          ref: ${{ steps.context.outputs.sha }}
+          fetch-depth: 0
+          # Keep the checkout inside the Docker build context so the host
+          # commands and the containerized integration test use the same tree.
+          path: maker-dashboard/coinswap-upstream
+          persist-credentials: false
+
+      - name: Confirm commit belongs to Coinswap master
+        env:
+          COINSWAP_SHA: ${{ steps.context.outputs.sha }}
+        working-directory: maker-dashboard/coinswap-upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/heads/master:refs/remotes/origin/master"
+          if ! git merge-base --is-ancestor "${COINSWAP_SHA}" "origin/master"; then
+            echo "::error::${COINSWAP_SHA} is not a commit on citadel-tech/coinswap master."
+            exit 1
+          fi
+          test "$(git rev-parse HEAD)" = "${COINSWAP_SHA}"
+
+      - name: Set up stable Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: maker-dashboard/frontend/package-lock.json
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-maker-dashboard-cargo-${{ hashFiles('maker-dashboard/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-maker-dashboard-cargo-
+
+      - name: Cache exact compatibility build outputs
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: maker-dashboard/target/
+          key: ${{ runner.os }}-maker-dashboard-compatibility-${{ github.sha }}-${{ steps.context.outputs.sha }}-${{ hashFiles('maker-dashboard/Cargo.lock') }}
+
+      - name: Install native build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf \
+            automake \
+            build-essential \
+            cmake \
+            file \
+            git \
+            libssl-dev \
+            libtool \
+            pkg-config \
+            protobuf-compiler
+
+      - name: Override Coinswap dependency with the exact checkout
+        working-directory: maker-dashboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> .cargo/config.toml <<'PATCH'
+
+          [patch."https://github.com/citadel-tech/coinswap"]
+          coinswap = { path = "coinswap-upstream" }
+          PATCH
+
+      - name: Build and test Maker Dashboard
+        id: check
+        env:
+          COINSWAP_SHA: ${{ steps.context.outputs.sha }}
+          DASHBOARD_ROOT: ${{ github.workspace }}/maker-dashboard
+          COMPLETE_LOG: ${{ runner.temp }}/maker-dashboard-compatibility.log
+          FAILED_STAGE_FILE: ${{ runner.temp }}/maker-dashboard-failed-stage.txt
+          FAILED_LOG_FILE: ${{ runner.temp }}/maker-dashboard-failed-stage.log
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > "${COMPLETE_LOG}"
+          : > "${FAILED_STAGE_FILE}"
+          : > "${FAILED_LOG_FILE}"
+
+          run_stage() {
+            local stage="$1"
+            shift
+            local stage_log="${RUNNER_TEMP}/maker-dashboard-current-stage.log"
+            local command_status=0
+            local command_token
+            command_token="$(< /proc/sys/kernel/random/uuid)"
+            : > "${stage_log}"
+            echo "::group::${stage}"
+            printf '\n===== %s =====\n' "${stage}" | tee -a "${COMPLETE_LOG}"
+            # Treat checked-out build output as plain text, not workflow commands.
+            echo "::stop-commands::${command_token}"
+            if "$@" 2>&1 | tee -a "${COMPLETE_LOG}" "${stage_log}"; then
+              command_status=0
+            else
+              command_status="${PIPESTATUS[0]}"
+            fi
+            echo "::${command_token}::"
+            echo "::endgroup::"
+            if [[ "${command_status}" -ne 0 ]]; then
+              printf '%s\n' "${stage}" > "${FAILED_STAGE_FILE}"
+              cp "${stage_log}" "${FAILED_LOG_FILE}"
+              return "${command_status}"
+            fi
+          }
+
+          run_in_dashboard() (
+            set -euo pipefail
+            cd "${DASHBOARD_ROOT}" || exit $?
+            "$@"
+          )
+
+          verify_resolution_and_build() {
+            local metadata_file="${RUNNER_TEMP}/maker-dashboard-metadata.json"
+            local expected_manifest="${DASHBOARD_ROOT}/coinswap-upstream/Cargo.toml"
+            local actual_sha
+
+            cargo metadata --format-version 1 > "${metadata_file}" || return $?
+            if ! jq -e --arg expected "${expected_manifest}" '
+              any(.packages[];
+                .name == "coinswap"
+                and .source == null
+                and .manifest_path == $expected
+              )
+            ' "${metadata_file}"; then
+              echo "error: Cargo did not resolve coinswap from ${expected_manifest}."
+              return 1
+            fi
+            actual_sha="$(git -C coinswap-upstream rev-parse HEAD)" || return $?
+            if [[ "${actual_sha}" != "${COINSWAP_SHA}" ]]; then
+              echo "error: coinswap-upstream is not checked out at ${COINSWAP_SHA}."
+              return 1
+            fi
+            echo "Resolved coinswap from ${expected_manifest} at ${COINSWAP_SHA}."
+            npm ci --prefix frontend || return $?
+            npm run --prefix frontend build || return $?
+            cargo build --release || return $?
+          }
+
+          check_status=0
+          run_stage \
+            "Build Maker Dashboard" \
+            run_in_dashboard verify_resolution_and_build || check_status=$?
+
+          if [[ "${check_status}" -eq 0 ]]; then
+            run_stage \
+              "Run unit tests" \
+              run_in_dashboard cargo test || check_status=$?
+          fi
+
+          if [[ "${check_status}" -eq 0 ]]; then
+            run_stage \
+              "Run integration test" \
+              run_in_dashboard make test-integration-docker || check_status=$?
+          fi
+
+          if [[ "${check_status}" -eq 0 ]]; then
+            echo "result=success" >> "${GITHUB_OUTPUT}"
+            echo "The build, unit tests, and integration test all succeeded."
+          else
+            echo "result=failure" >> "${GITHUB_OUTPUT}"
+            echo "::error::Compatibility check failed in: $(<"${FAILED_STAGE_FILE}")"
+          fi
+
+          # The reporting steps need to run after a compatibility failure.
+          exit 0
+
+      - name: Prepare failure issue Markdown
+        if: steps.check.outputs.result == 'failure'
+        env:
+          COINSWAP_SHA: ${{ steps.context.outputs.sha }}
+          COINSWAP_REF: ${{ steps.context.outputs.ref }}
+          COINSWAP_ACTOR: ${{ steps.context.outputs.actor }}
+          COINSWAP_COMMIT_URL: ${{ steps.context.outputs.commit_url }}
+          DASHBOARD_SHA: ${{ github.sha }}
+          DASHBOARD_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMPLETE_LOG: ${{ runner.temp }}/maker-dashboard-compatibility.log
+          FAILED_STAGE_FILE: ${{ runner.temp }}/maker-dashboard-failed-stage.txt
+          FAILED_LOG_FILE: ${{ runner.temp }}/maker-dashboard-failed-stage.log
+          ERROR_SUMMARY_FILE: ${{ runner.temp }}/maker-dashboard-error-summary.txt
+          ISSUE_BODY: ${{ runner.temp }}/coinswap-compatibility-issue.md
+          ISSUE_COMMENT: ${{ runner.temp }}/coinswap-compatibility-comment.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed_stage="$(<"${FAILED_STAGE_FILE}")"
+          clean_log="${RUNNER_TEMP}/maker-dashboard-failed-stage-clean.log"
+          error_output="${RUNNER_TEMP}/maker-dashboard-error-output.log"
+
+          # Keep the artifact complete, but remove terminal control sequences
+          # from anything rendered in a GitHub issue.
+          perl -pe '
+            s/\e\[[0-?]*[ -\/]*[@-~]//g;
+            s/\e\][^\a]*(?:\a|\e\\)//g;
+            s/\r//g;
+            s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]//g;
+          ' "${FAILED_LOG_FILE}" > "${clean_log}"
+
+          awk '
+            BEGIN { found = 0; emitted = 0 }
+            {
+              lower = tolower($0)
+              if (!found) {
+                if (lower ~ /^[[:space:]]*error(\[[^]]+\])?:/) found = 1
+                else if (lower ~ /:[0-9]+:[0-9]+: error:/) found = 1
+                else if (lower ~ /^thread .* panicked/) found = 1
+                else if (lower ~ /^[[:space:]]*failures:/) found = 1
+                else if (lower ~ /^[[:space:]]*test result: failed/) found = 1
+                else if (lower ~ /^[[:space:]]*npm (err!|error)/) found = 1
+                else if (lower ~ /^[[:space:]]*failed to/) found = 1
+                else if (lower ~ /^[[:space:]]*fatal:/) found = 1
+              }
+              if (found && emitted < 180) {
+                print
+                emitted++
+              }
+            }
+          ' "${clean_log}" > "${error_output}"
+
+          if [[ ! -s "${error_output}" ]]; then
+            tail -n 100 "${clean_log}" > "${error_output}"
+          fi
+          sed 's/```/` ` `/g' "${error_output}" > "${error_output}.safe"
+          mv "${error_output}.safe" "${error_output}"
+
+          # Leave enough room for the issue context below GitHub's body limit.
+          original_bytes="$(wc -c < "${error_output}")"
+          awk '{ print substr($0, 1, 500) }' \
+            "${error_output}" > "${error_output}.lines"
+          head -c 30000 "${error_output}.lines" > "${error_output}.capped"
+          capped_bytes="$(wc -c < "${error_output}.capped")"
+          if (( capped_bytes < original_bytes )); then
+            printf '\n[Output truncated; see the workflow artifact for the complete log.]\n' \
+              >> "${error_output}.capped"
+          fi
+          mv "${error_output}.capped" "${error_output}"
+          rm "${error_output}.lines"
+
+          error_summary="$(
+            grep -i -m1 -E \
+              '^[[:space:]]*error(\[[^]]+\])?:|:[0-9]+:[0-9]+: error:|^thread .* panicked|^[[:space:]]*failures:|^[[:space:]]*test result: failed|^[[:space:]]*npm (ERR!|error)|^[[:space:]]*failed to|^[[:space:]]*fatal:' \
+              "${clean_log}" || true
+          )"
+          if [[ -z "${error_summary}" ]]; then
+            error_summary="The command exited unsuccessfully; see the focused output below."
+          fi
+          error_summary="$(printf '%s' "${error_summary}" | sed 's/^[[:space:]]*//')"
+          error_summary="${error_summary:0:500}"
+          printf '%s\n' "${error_summary}" > "${ERROR_SUMMARY_FILE}"
+
+          case "${failed_stage}" in
+            "Build Maker Dashboard") failure_area="Dashboard build" ;;
+            "Run unit tests") failure_area="Unit tests" ;;
+            "Run integration test") failure_area="Integration test" ;;
+            *) failure_area="Compatibility check" ;;
+          esac
+
+          error_location="$(
+            grep -m1 -E '^[[:space:]]*-->[[:space:]]+|[^[:space:]]+:[0-9]+:[0-9]+:[[:space:]]+error:' \
+              "${clean_log}" || true
+          )"
+          error_location="$(printf '%s' "${error_location}" | sed -E 's/^[[:space:]]*-->[[:space:]]*//')"
+          error_location="${error_location:0:500}"
+
+          {
+            printf '<!-- coinswap-compatibility:%s -->\n' "${COINSWAP_SHA}"
+            printf '## What failed\n\n'
+            printf 'The `%s` stage failed against the selected Coinswap commit.\n\n' "${failed_stage}"
+            printf '**Affected area:** `%s`\n\n' "${failure_area}"
+            printf '**Error:**\n\n> %s\n\n' "${error_summary}"
+            if [[ -n "${error_location}" ]]; then
+              printf '**Source location:** `%s`\n\n' "${error_location}"
+            fi
+            printf '### Relevant error output\n\n```text\n'
+            cat "${error_output}"
+            printf '\n```\n\n'
+            printf 'The complete stage and workflow logs are attached to the [failed workflow run](%s).\n\n' "${RUN_URL}"
+            printf '<details>\n<summary>Compatibility context</summary>\n\n'
+            printf -- '- Coinswap commit: [`%s`](%s)\n' "${COINSWAP_SHA}" "${COINSWAP_COMMIT_URL}"
+            printf -- '- Coinswap ref: `%s`\n' "${COINSWAP_REF}"
+            printf -- '- Triggering actor: `%s`\n' "${COINSWAP_ACTOR}"
+            printf -- '- Maker Dashboard commit: [`%s`](%s)\n' "${DASHBOARD_SHA}" "${DASHBOARD_COMMIT_URL}"
+            printf -- '- Failing stage: `%s`\n' "${failed_stage}"
+            printf '\n</details>\n\n'
+            printf '_Generated automatically by the Maker Dashboard Coinswap compatibility workflow._\n'
+          } > "${ISSUE_BODY}"
+
+          {
+            printf '## Compatibility check failed again\n\n'
+            printf '**Stage:** `%s`\n\n' "${failed_stage}"
+            printf '**Affected area:** `%s`\n\n' "${failure_area}"
+            printf '**Error:**\n\n> %s\n\n```text\n' "${error_summary}"
+            cat "${error_output}"
+            printf '\n```\n\n[View the workflow run and complete logs](%s).\n' "${RUN_URL}"
+          } > "${ISSUE_COMMENT}"
+
+      - name: Upload failure report and complete logs
+        if: steps.check.outputs.result == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coinswap-compatibility-${{ steps.context.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/maker-dashboard-compatibility.log
+            ${{ runner.temp }}/maker-dashboard-failed-stage.txt
+            ${{ runner.temp }}/maker-dashboard-failed-stage.log
+            ${{ runner.temp }}/maker-dashboard-error-summary.txt
+            ${{ runner.temp }}/coinswap-compatibility-issue.md
+            ${{ runner.temp }}/coinswap-compatibility-comment.md
+          if-no-files-found: error
+          retention-days: 14
+
+  report:
+    name: Report compatibility failure
+    needs: compatibility
+    if: needs.compatibility.outputs.result == 'failure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Only this job can modify issues; checked-out code runs without that token.
+    permissions:
+      actions: read # Download the report artifact from the compatibility job.
+      issues: write # Create or update only the compatibility failure issue.
+    steps:
+      - name: Download failure report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: coinswap-compatibility-${{ needs.compatibility.outputs.coinswap_sha }}
+          path: ${{ runner.temp }}/coinswap-compatibility-report
+
+      - name: Create or update compatibility issue
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          COINSWAP_SHA: ${{ needs.compatibility.outputs.coinswap_sha }}
+          ISSUE_BODY: ${{ runner.temp }}/coinswap-compatibility-report/coinswap-compatibility-issue.md
+          ISSUE_COMMENT: ${{ runner.temp }}/coinswap-compatibility-report/coinswap-compatibility-comment.md
+          ERROR_SUMMARY_FILE: ${{ runner.temp }}/coinswap-compatibility-report/maker-dashboard-error-summary.txt
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs')
+            const owner = context.repo.owner
+            const repo = context.repo.repo
+            const sha = process.env.COINSWAP_SHA
+            const marker = `<!-- coinswap-compatibility:${sha} -->`
+            const body = fs.readFileSync(process.env.ISSUE_BODY, 'utf8')
+            const comment = fs.readFileSync(process.env.ISSUE_COMMENT, 'utf8')
+            const errorSummary = fs
+              .readFileSync(process.env.ERROR_SUMMARY_FILE, 'utf8')
+              .replace(/[\r\n\t]+/g, ' ')
+              .replace(/[`*_<>]/g, '')
+              .replace(/\s+/g, ' ')
+              .trim()
+            const issueTitle =
+              `Coinswap compatibility failed (${sha.slice(0, 12)}): ${errorSummary.slice(0, 85)}`
+
+            // Use the strongly consistent issues endpoint so an immediate rerun
+            // cannot miss a newly created report due to search indexing delay.
+            // Do not filter by the best-effort label: an older match may be
+            // unlabeled. Different Coinswap SHAs intentionally get separate issues.
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100,
+            })
+            const existing = openIssues.find(
+              (issue) => !issue.pull_request && (issue.body || '').includes(marker),
+            )
+
+            if (existing) {
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: existing.number,
+                title: issueTitle,
+                body,
+              })
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: existing.number,
+                body: comment,
+              })
+              core.info(`Updated existing issue #${existing.number}`)
+              return
+            }
+
+            let labels = []
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: 'upstream-breakage' })
+              labels = ['upstream-breakage']
+            } catch (error) {
+              if (error.status === 404) {
+                try {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name: 'upstream-breakage',
+                    color: 'b60205',
+                    description: 'Breakage caused by an upstream Coinswap change',
+                  })
+                  labels = ['upstream-breakage']
+                } catch (labelError) {
+                  core.warning(`Could not create upstream-breakage label: ${labelError.message}`)
+                }
+              } else {
+                core.warning(`Could not inspect upstream-breakage label: ${error.message}`)
+              }
+            }
+
+            const issue = { owner, repo, title: issueTitle, body, labels }
+            try {
+              const created = await github.rest.issues.create(issue)
+              core.info(`Created issue #${created.data.number}`)
+            } catch (error) {
+              if (labels.length === 0) throw error
+              core.warning(`Issue creation with label failed; retrying without it: ${error.message}`)
+              issue.labels = []
+              const created = await github.rest.issues.create(issue)
+              core.info(`Created issue #${created.data.number} without a label`)
+            }
+
+      - name: Fail workflow after reporting
+        shell: bash
+        run: |
+          echo "::error::Maker Dashboard compatibility failed; the issue was created or updated."
+          exit 1
