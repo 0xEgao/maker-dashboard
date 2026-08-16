@@ -33,9 +33,9 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Builds a fresh Router backed by an empty MakerManager in an isolated temp dir.
 ///
-/// Mirrors the post-login state: an `AuthConfig` is pre-created, the AES key
-/// is derived, and `MakerManager::unlock` is called so handlers see an
-/// initialized + unlocked dashboard.
+/// Mirrors the post-login state: an `AuthConfig` is pre-created so handlers see
+/// an initialized dashboard. Makers are discovered from config.toml files in
+/// the temp dir (none by default).
 pub fn test_app() -> Router {
     let config_dir = temp_config_dir();
     if config_dir.exists() {
@@ -44,11 +44,8 @@ pub fn test_app() -> Router {
     std::fs::create_dir_all(&config_dir).unwrap();
 
     let auth_config = AuthConfig::new("test-password").expect("AuthConfig::new");
-    let enc_key = auth_config.derive_key("test-password").expect("derive_key");
 
-    let mut manager =
-        MakerManager::new_for_testing(config_dir.clone(), None).expect("MakerManager::new");
-    manager.unlock(enc_key).expect("MakerManager::unlock");
+    let manager = MakerManager::new_for_testing(config_dir.clone()).expect("MakerManager::new");
 
     let state = AppState {
         makers: Arc::new(Mutex::new(manager)),

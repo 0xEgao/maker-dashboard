@@ -17,12 +17,16 @@ use openswap::bitcoin::Network;
 use openswap::bitcoind::bitcoincore_rpc::Auth;
 use openswap::maker::{MakerServer, MakerServerConfig};
 use openswap::wallet::{BackendConfig, CoreRpcConfig, ElectrumConfig};
-use persistence::{DashboardSettings, PersistenceManager};
+use persistence::PersistenceManager;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
-/// Electrum server makers use for chain data when running with the Electrum
-/// backend. Hardcoded — the onboarding flow does not collect node settings.
-pub const ELECTRUM_URL: &str = "tcp://170.75.166.88:50001";
+/// Default Electrum server makers use for chain data when running with the
+/// Electrum backend. Shown prefilled on the startup screen; user-configurable.
+pub const ELECTRUM_URL: &str = "ssl://electrum.citadelfoss.xyz:50002";
+
+/// Default transaction fee rate (sat/vB), matching openswap core's `MIN_FEE_RATE`.
+pub const DEFAULT_FEE_RATE: f64 = 2.0;
 
 /// Chain-data backend a maker uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -35,24 +39,19 @@ pub enum MakerBackend {
 }
 
 /// Configuration for creating a new maker.
+///
+/// All fields are persisted in the maker's `<data_dir>/config.toml` via
+/// openswap core's own config writer — the same file makerd uses. The wallet
+/// password is NOT part of this struct: it is accepted as a separate parameter
+/// where needed, zeroized immediately after wallet load, and never persisted.
 #[derive(Debug, Clone)]
 pub struct MakerConfig {
-    /// Chain-data backend. Default: Electrum.
-    pub backend: MakerBackend,
-    /// Optional data directory. Default: `~/.openswap/<id>`
+    /// Optional data directory. Default: `<dashboard data dir>/<id>`
     pub data_directory: Option<PathBuf>,
-    /// Bitcoin Core RPC network address (e.g. "127.0.0.1:38332")
-    pub rpc: String,
-    /// Bitcoin Core ZMQ address (e.g. "tcp://127.0.0.1:28332")
-    pub zmq: String,
-    /// Bitcoin Core RPC authentication (username, password).
-    pub auth: Option<(String, String)>,
     /// Optional Tor authentication string
     pub tor_auth: Option<String>,
-    /// Optional wallet name
+    /// Optional wallet name. Default: the maker id.
     pub wallet_name: Option<String>,
-    /// Optional password for wallet encryption
-    pub password: Option<String>,
     pub network_port: u16,
     pub rpc_port: u16,
     pub socks_port: u16,
@@ -60,24 +59,20 @@ pub struct MakerConfig {
     pub min_swap_amount: u64,
     pub fidelity_amount: u64,
     pub fidelity_timelock: u32,
+    /// Fidelity bond transaction fee rate (sat/vB), consumed by core.
+    pub fidelity_feerate: f64,
     pub required_confirms: u32,
     pub base_fee: u64,
     pub amount_relative_fee_pct: f64,
     pub time_relative_fee_pct: f64,
-    pub nostr_relays: Vec<String>,
 }
 
 impl Default for MakerConfig {
     fn default() -> Self {
         Self {
-            backend: MakerBackend::Electrum,
             data_directory: None,
-            rpc: "127.0.0.1:38332".to_string(),
-            zmq: "tcp://127.0.0.1:28332".to_string(),
-            auth: Some(("user".to_string(), "password".to_string())),
             tor_auth: None,
             wallet_name: None,
-            password: None,
             network_port: 6102,
             rpc_port: 6103,
             socks_port: 9050,
@@ -85,11 +80,42 @@ impl Default for MakerConfig {
             min_swap_amount: 10000,
             fidelity_amount: 10000,
             fidelity_timelock: 15000,
+            fidelity_feerate: DEFAULT_FEE_RATE,
             required_confirms: 1,
             base_fee: 1000,
-            amount_relative_fee_pct: 0.025,
-            time_relative_fee_pct: 0.001,
-            nostr_relays: vec![],
+            amount_relative_fee_pct: 0.0025,
+            time_relative_fee_pct: 0.0001,
+        }
+    }
+}
+
+/// Chain-data backend selected on the startup screen. Runtime-only: entered by
+/// the user at every dashboard start, held in memory, applied to all makers.
+/// Never persisted.
+#[derive(Debug, Clone)]
+pub struct RuntimeBackend {
+    pub kind: MakerBackend,
+    /// Bitcoin Core RPC address (bitcoind backend only)
+    pub rpc: String,
+    /// Bitcoin Core ZMQ address (bitcoind backend only)
+    pub zmq: String,
+    /// Bitcoin Core RPC username (bitcoind backend only)
+    pub rpc_user: String,
+    /// Bitcoin Core RPC password (bitcoind backend only)
+    pub rpc_password: String,
+    /// Electrum server URL (electrum backend only). Default: [`ELECTRUM_URL`].
+    pub electrum_url: String,
+}
+
+impl Default for RuntimeBackend {
+    fn default() -> Self {
+        Self {
+            kind: MakerBackend::Electrum,
+            rpc: "127.0.0.1:38332".to_string(),
+            zmq: "tcp://127.0.0.1:28332".to_string(),
+            rpc_user: "user".to_string(),
+            rpc_password: "password".to_string(),
+            electrum_url: ELECTRUM_URL.to_string(),
         }
     }
 }
@@ -112,209 +138,119 @@ pub struct MakerInfo {
 /// High-level manager for creating and interacting with makers
 pub struct MakerManager {
     pool: MakerPool,
-    /// Persisted configs keyed by maker ID
+    /// Maker configs keyed by maker ID, discovered from per-maker config.toml
+    /// files under the dashboard data dir.
     configs: HashMap<MakerId, MakerConfig>,
-    /// Handles saving/loading maker state to disk
+    /// Handles maker discovery and config.toml IO
     persistence: PersistenceManager,
+    /// Backend selected on the startup screen. `None` until the user submits it;
+    /// runtime-only, never persisted.
+    backend: Option<RuntimeBackend>,
     /// Running bitcoind child process spawned by the dashboard, if any
     bitcoind_process: Option<std::process::Child>,
     /// Network bitcoind was started on (e.g. "regtest", "signet")
     bitcoind_network: Option<String>,
     #[allow(dead_code)]
     tor_manager: TorManager,
-    /// True iff the encryption key has been provided AND configs have been loaded.
-    /// `false` between startup and login when `makers.json` exists encrypted but no key is known.
-    unlocked: bool,
-    settings: DashboardSettings,
 }
 
 impl MakerManager {
     const DEFAULT_WALLET_NAME: &'static str = "maker-wallet";
     const LEGACY_RPC_WALLET_NAME: &'static str = "random";
 
-    /// Creates a new MakerManager with persistence at the given config directory.
+    /// Creates a new MakerManager rooted at the given data directory.
     ///
-    /// Loads any previously saved maker configs and re-initializes them. If the
-    /// persisted auto-start setting is enabled, restored maker servers are started.
-    ///
-    /// Behavior:
-    /// - If `enc_key` is `Some`, attempts to load and re-initialize previously
-    ///   saved makers, then auto-starts them when the setting is enabled.
-    /// - If `enc_key` is `None` AND `makers.json` does not exist (or is the
-    ///   legacy plaintext format), behaves as the `Some` case above.
-    /// - If `enc_key` is `None` AND `makers.json` is an encrypted envelope,
-    ///   the load is deferred. `configs` stays empty and `is_unlocked()` is
-    ///   false until [`MakerManager::unlock`] is called with the AES key.
-    pub fn new(config_dir: PathBuf, enc_key: Option<[u8; 32]>) -> Result<Self> {
-        let tor_manager = TorManager::detect_or_start(&config_dir).unwrap_or_else(|e| {
+    /// Makers are discovered by scanning the data dir for per-maker
+    /// `config.toml` files and registered as stopped. They are initialized and
+    /// auto-started once the backend is set via [`MakerManager::set_backend`].
+    /// `quiet_tor` silences the embedded Tor's console logging (used when the
+    /// stdout log filter is off).
+    pub fn new(config_dir: PathBuf, quiet_tor: bool) -> Result<Self> {
+        let tor_manager = TorManager::detect_or_start(&config_dir, quiet_tor).unwrap_or_else(|e| {
             tracing::warn!(
                 "Tor could not be started: {}. Tor-dependent makers will fail to start.",
                 e
             );
             TorManager::noop()
         });
-        Self::new_with_tor(config_dir, enc_key, tor_manager)
+        Self::new_with_tor(config_dir, tor_manager)
     }
 
     /// Creates a MakerManager without starting or detecting Tor. Use in tests only.
     #[allow(dead_code)]
-    pub fn new_for_testing(config_dir: PathBuf, enc_key: Option<[u8; 32]>) -> Result<Self> {
-        Self::new_with_tor(config_dir, enc_key, TorManager::noop())
+    pub fn new_for_testing(config_dir: PathBuf) -> Result<Self> {
+        Self::new_with_tor(config_dir, TorManager::noop())
     }
 
-    fn new_with_tor(
-        config_dir: PathBuf,
-        enc_key: Option<[u8; 32]>,
-        tor_manager: TorManager,
-    ) -> Result<Self> {
-        let persistence = PersistenceManager::new(config_dir.clone(), enc_key)?;
-        let settings = persistence.load_settings()?;
+    fn new_with_tor(config_dir: PathBuf, tor_manager: TorManager) -> Result<Self> {
+        let persistence = PersistenceManager::new(config_dir)?;
+        let configs: HashMap<MakerId, MakerConfig> = persistence
+            .discover_makers()
+            .into_iter()
+            .map(|(id, config)| {
+                tracing::info!("Discovered maker '{}' from config.toml", id);
+                (id, config)
+            })
+            .collect();
 
-        let mut mgr = Self {
+        Ok(Self {
             pool: MakerPool::new(),
-            configs: HashMap::new(),
+            configs,
             persistence,
+            backend: None,
             bitcoind_process: None,
             bitcoind_network: None,
             tor_manager,
-            unlocked: false,
-            settings,
-        };
+        })
+    }
 
-        // Decide whether we can load now or must defer until unlock().
-        // We can load eagerly when:
-        //   - we have a key (enc_key.is_some()), OR
-        //   - the on-disk state is missing or in legacy plaintext format.
-        // The persistence layer already returns an error when it encounters
-        // an encrypted envelope without a key, so only attempt loading when
-        // the policy above is satisfied.
-        let can_load = enc_key.is_some()
-            || !mgr.persistence.state_file_exists()
-            || !Self::file_is_encrypted_envelope(&mgr.persistence);
+    /// Returns the currently configured backend, if the startup screen has
+    /// been submitted.
+    pub fn backend(&self) -> Option<&RuntimeBackend> {
+        self.backend.as_ref()
+    }
 
-        if can_load {
-            let saved_configs = mgr.persistence.load()?;
-            mgr.restore_makers(saved_configs);
-            mgr.auto_start_configured_makers();
-            mgr.unlocked = true;
+    /// Sets the backend for all makers (runtime-only, never persisted), then
+    /// initializes every registered maker and auto-starts those whose wallet
+    /// opens without a password. Makers that fail to initialize or start are
+    /// left stopped; the UI can start them later with a wallet password.
+    pub fn set_backend(&mut self, backend: RuntimeBackend) {
+        self.backend = Some(backend);
+        self.init_and_auto_start_all();
+    }
+
+    /// Retries initialization and auto-start for all stopped makers, e.g. after
+    /// bitcoind becomes available. No-op if the backend is not set yet.
+    pub fn retry_stopped_makers(&mut self) {
+        if self.backend.is_some() {
+            self.init_and_auto_start_all();
         }
-
-        Ok(mgr)
     }
 
-    /// Best-effort check: returns true if `makers.json` looks like an encrypted
-    /// envelope (`{ "v": 1, "data": ... }`). Returns false on any read/parse
-    /// error or for legacy plaintext.
-    fn file_is_encrypted_envelope(persistence: &PersistenceManager) -> bool {
-        let path = persistence.config_dir.join("makers.json");
-        let Ok(bytes) = std::fs::read(&path) else {
-            return false;
-        };
-        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-            return false;
-        };
-        value.get("v") == Some(&serde_json::json!(1)) && value.get("data").is_some()
-    }
-
-    /// Restore previously registered makers (init only; auto-start happens after this).
-    fn restore_makers(&mut self, saved_configs: HashMap<MakerId, MakerConfig>) {
-        let mut normalized_any = false;
-        for (id, config) in saved_configs {
-            tracing::info!("Restoring maker '{}'", id);
-            let original_wallet_name = config.wallet_name.clone();
-            let normalized_config = Self::normalize_config(&id, config);
-            normalized_any |= normalized_config.wallet_name != original_wallet_name;
-
-            match self.create_maker_internal(id.clone(), normalized_config.clone(), false) {
-                Ok(()) => tracing::info!("Maker '{}' restored successfully (stopped)", id),
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to restore maker '{}': {}. Config retained for manual start.",
-                        id,
-                        e
-                    );
-                    self.configs.insert(id, normalized_config);
+    fn init_and_auto_start_all(&mut self) {
+        let ids: Vec<MakerId> = self.configs.keys().cloned().collect();
+        for id in ids {
+            if !self.pool.contains(&id) {
+                let config = self.configs.get(&id).cloned().expect("key from configs");
+                if let Err(e) = self.create_maker_internal(id.clone(), config, None) {
+                    tracing::warn!("Maker '{}' failed to initialize: {}. Left stopped.", id, e);
+                    continue;
                 }
             }
-        }
-
-        if normalized_any {
-            self.persist();
-        }
-    }
-
-    pub(crate) fn auto_start_configured_makers(&mut self) {
-        if !self.settings.auto_start_makers {
-            return;
-        }
-
-        let restored_ids: Vec<MakerId> = self.configs.keys().cloned().collect();
-        for id in restored_ids {
-            match self.start_maker(&id) {
-                Ok(()) => {
-                    tracing::info!("Maker '{}' auto-started", id);
-                }
+            match self.start_maker(&id, None) {
+                Ok(()) => tracing::info!("Maker '{}' auto-started", id),
                 Err(MakerManagerError::AlreadyRunning(_)) => {}
-                Err(e) => {
-                    tracing::warn!("Maker '{}' failed to auto-start: {}", id, e);
-                }
+                Err(e) => tracing::warn!("Maker '{}' did not auto-start: {}", id, e),
             }
         }
     }
 
-    /// Provides the AES key and loads configs from disk if not already done.
-    /// Idempotent: a second call (with the same or different key) is a no-op
-    /// once the manager is already unlocked.
-    ///
-    /// Use this after a successful login or after first-run setup to bring the
-    /// manager into the post-authentication state.
-    pub fn unlock(&mut self, key: [u8; 32]) -> Result<()> {
-        if self.unlocked {
-            return Ok(());
-        }
-        self.persistence.update_enc_key(Some(key));
-        let saved_configs = self.persistence.load()?;
-        self.restore_makers(saved_configs);
-        self.auto_start_configured_makers();
-        self.unlocked = true;
-
-        // If makers.json doesn't exist yet (fresh setup), persist an empty
-        // encrypted envelope now so subsequent restarts go through the normal
-        // "encrypted, deferred load" path.
-        if !self.persistence.state_file_exists() {
-            self.persist();
-        }
-
-        Ok(())
-    }
-
-    /// Returns true iff `unlock()` (or the `Some(enc_key)` constructor path)
-    /// has run successfully — i.e. the manager has the AES key and any
-    /// persisted makers have been restored into memory.
-    pub fn is_unlocked(&self) -> bool {
-        self.unlocked
-    }
-
-    /// Returns true if the underlying `makers.json` already exists on disk.
-    /// Exposed for the first-run setup handler to refuse overwriting state.
-    pub fn persistence_state_file_exists(&self) -> bool {
-        self.persistence.state_file_exists()
-    }
-
-    pub fn auto_start_makers(&self) -> bool {
-        self.settings.auto_start_makers
-    }
-
-    pub fn set_auto_start_makers(&mut self, enabled: bool) -> Result<()> {
-        self.settings.auto_start_makers = enabled;
-        self.persistence.save_settings(&self.settings)
-    }
-
-    /// Returns the default openswap data directory for a maker.
-    /// Defaults to `~/.openswap/{id}`.
-    fn default_maker_data_dir(id: &MakerId) -> PathBuf {
-        let home = dirs::home_dir().expect("Failed to determine home directory");
-        home.join(".openswap").join(id)
+    /// Returns the default data directory for a maker.
+    /// Defaults to `<dashboard data dir>/{id}`. With the default data dir and
+    /// id `maker` this is exactly makerd's default dir `~/.openswap/maker`,
+    /// so that maker is fully interoperable with the CLI.
+    fn default_maker_data_dir(&self, id: &MakerId) -> PathBuf {
+        self.persistence.config_dir.join(id)
     }
 
     fn normalize_wallet_name(id: &MakerId, wallet_name: Option<String>) -> Option<String> {
@@ -362,15 +298,16 @@ impl MakerManager {
             .map_err(|e| anyhow!("Failed to initialize maker server: {e:?}"))
     }
 
-    fn infer_network(&self, rpc_url: &str) -> Network {
+    fn infer_network(&self) -> Network {
         match self.bitcoind_network.as_deref() {
             Some("regtest") => Network::Regtest,
             Some("signet") => Network::Signet,
             Some("testnet") => Network::Testnet,
             Some("mainnet") => Network::Bitcoin,
-            _ => match rpc_url
-                .rsplit(':')
-                .next()
+            _ => match self
+                .backend
+                .as_ref()
+                .and_then(|b| b.rpc.rsplit(':').next())
                 .and_then(|port| port.parse::<u16>().ok())
             {
                 Some(18443) => Network::Regtest,
@@ -382,39 +319,46 @@ impl MakerManager {
         }
     }
 
-    /// Internal: initialise the maker and register it in the pool.
-    /// Does NOT start the openswap server.
+    /// Internal: write the maker's config.toml, initialise the maker, and
+    /// register it in the pool. Does NOT start the openswap server.
+    ///
+    /// `password` is the wallet-opening password for encrypted wallets. It is
+    /// used only during `MakerServer::init` and zeroized on return; it is never
+    /// stored in dashboard state or on disk. (Note: openswap core currently
+    /// retains its own copy inside the `MakerServer` for the process lifetime —
+    /// that is core's behavior, outside our control.)
     fn create_maker_internal(
         &mut self,
         id: MakerId,
         config: MakerConfig,
-        persist: bool,
+        password: Option<Zeroizing<String>>,
     ) -> Result<()> {
         let mut config = Self::normalize_config(&id, config);
         if config.data_directory.is_none() {
-            let maker_dir = Self::default_maker_data_dir(&id);
+            let maker_dir = self.default_maker_data_dir(&id);
             std::fs::create_dir_all(&maker_dir)?;
             config.data_directory = Some(maker_dir);
         }
 
-        let backend = match config.backend {
+        // Write static fields to <data_dir>/config.toml via core's writer,
+        // exactly as makerd does.
+        persistence::write_maker_toml(&config)?;
+
+        let backend_input = self
+            .backend
+            .clone()
+            .ok_or_else(|| anyhow!("Backend is not configured yet"))?;
+        let backend = match backend_input.kind {
             MakerBackend::Electrum => BackendConfig::Electrum(ElectrumConfig {
-                url: ELECTRUM_URL.to_string(),
+                url: backend_input.electrum_url.clone(),
                 ..Default::default()
             }),
-            MakerBackend::Bitcoind => {
-                let (user, pass) = config.auth.clone().ok_or_else(|| {
-                    anyhow!(
-                        "RPC authentication credentials must be provided for the bitcoind backend"
-                    )
-                })?;
-                BackendConfig::CoreRpc(CoreRpcConfig {
-                    url: config.rpc.clone(),
-                    auth: Auth::UserPass(user, pass),
-                    wallet_name: config.wallet_name.clone().unwrap_or_else(|| id.clone()),
-                    zmq_addr: config.zmq.clone(),
-                })
-            }
+            MakerBackend::Bitcoind => BackendConfig::CoreRpc(CoreRpcConfig {
+                url: backend_input.rpc.clone(),
+                auth: Auth::UserPass(backend_input.rpc_user, backend_input.rpc_password),
+                wallet_name: config.wallet_name.clone().unwrap_or_else(|| id.clone()),
+                zmq_addr: backend_input.zmq.clone(),
+            }),
         };
 
         let data_dir = config
@@ -423,7 +367,7 @@ impl MakerManager {
             .expect("maker data directory is initialized above");
         MakerLogWriter::register_maker(&id, &data_dir, config.network_port)?;
         let wallet_name = config.wallet_name.clone().unwrap_or_else(|| id.clone());
-        let network = self.infer_network(&config.rpc);
+        let network = self.infer_network();
         let server_config = MakerServerConfig {
             data_dir,
             network_port: config.network_port,
@@ -436,27 +380,23 @@ impl MakerManager {
             supported_protocols: MakerServerConfig::default().supported_protocols,
             fidelity_amount: config.fidelity_amount,
             fidelity_timelock: config.fidelity_timelock,
+            fidelity_feerate: config.fidelity_feerate,
             network,
             wallet_name,
             backend,
             control_port: config.control_port,
             socks_port: config.socks_port,
             tor_auth_password: config.tor_auth.clone().unwrap_or_default(),
-            password: config.password.clone(),
-            nostr_relays: if config.nostr_relays.is_empty() {
-                MakerServerConfig::default().nostr_relays
-            } else {
-                config.nostr_relays.clone()
-            },
+            // Moved into core's config; our own `Zeroizing` copy is zeroed on
+            // return from this function.
+            password: password.as_ref().map(|p| p.as_str().to_string()),
+            nostr_relays: MakerServerConfig::default().nostr_relays,
         };
         let maker = Arc::new(Self::init_maker_server(server_config)?);
         self.pool
             .spawn_maker(id.clone(), maker, config.network_port)?;
 
         self.configs.insert(id, config);
-        if persist {
-            self.persist();
-        }
         Ok(())
     }
 
@@ -472,29 +412,16 @@ impl MakerManager {
 
     /// Creates and registers a new maker (init + message loop only, NOT started).
     /// Use `start_maker` to start the openswap server.
-    pub fn create_maker(&mut self, id: MakerId, config: MakerConfig) -> Result<()> {
-        let config = Self::normalize_config(&id, config);
-        self.create_maker_internal(id, config, true)
-    }
-
-    /// Saves current configs to disk.
-    fn persist(&self) {
-        if let Err(e) = self.persistence.save(&self.configs) {
-            tracing::error!("Failed to persist maker configs: {}", e);
-        }
-    }
-
-    /// Re-encrypts all maker configs with `new_key` and saves to disk.
-    /// Call after rotating the dashboard password so makers.json uses the new key.
     ///
-    /// Returns an error if the manager has not been unlocked yet (the in-memory
-    /// `configs` would be incomplete and saving would silently truncate state).
-    pub fn rotate_enc_key(&mut self, new_key: Option<[u8; 32]>) -> anyhow::Result<()> {
-        if !self.unlocked {
-            anyhow::bail!("MakerManager is locked; cannot rotate encryption key before login");
-        }
-        self.persistence.update_enc_key(new_key);
-        self.persistence.save(&self.configs)
+    /// `password` sets wallet encryption for a new wallet (or opens an existing
+    /// encrypted wallet). It is zeroized after wallet load and never persisted.
+    pub fn create_maker(
+        &mut self,
+        id: MakerId,
+        config: MakerConfig,
+        password: Option<Zeroizing<String>>,
+    ) -> Result<()> {
+        self.create_maker_internal(id, config, password)
     }
 
     pub fn is_port_in_use(&self, port: u16, exclude_id: Option<&str>) -> bool {
@@ -560,7 +487,16 @@ impl MakerManager {
 
     /// Starts the openswap server for a registered maker.
     /// The maker must already be created (via `create_maker`).
-    pub fn start_maker(&mut self, id: &MakerId) -> Result<(), MakerManagerError> {
+    ///
+    /// `password` is the wallet-opening password for encrypted wallets, used
+    /// only if the maker needs re-initialization. It is zeroized after wallet
+    /// load and never stored. Makers whose wallet opens without a password (or
+    /// that are already initialized) can pass `None`.
+    pub fn start_maker(
+        &mut self,
+        id: &MakerId,
+        password: Option<Zeroizing<String>>,
+    ) -> Result<(), MakerManagerError> {
         if !self.configs.contains_key(id) {
             return Err(MakerManagerError::NotFound(id.clone()));
         }
@@ -568,10 +504,11 @@ impl MakerManager {
             return Err(MakerManagerError::AlreadyRunning(id.clone()));
         }
         if !self.pool.contains(id) {
-            // Pool entry was lost (e.g. init failed at startup because bitcoind was down).
-            // Re-initialize now using the stored config.
+            // Pool entry was lost (e.g. init failed at startup because the
+            // wallet needed a password or bitcoind was down). Re-initialize
+            // now using the current config.
             let config = self.configs.get(id).cloned().expect("checked above");
-            self.create_maker_internal(id.clone(), config, false)
+            self.create_maker_internal(id.clone(), config, password)
                 .map_err(MakerManagerError::Other)?;
         }
         self.pool.start_server(id).map_err(MakerManagerError::Other)
@@ -703,8 +640,17 @@ impl MakerManager {
         self.pool.request(id, req).await
     }
 
-    /// Updates a maker's configuration, re-initialising the maker with the new settings.
-    pub fn update_config(&mut self, id: &MakerId, config: MakerConfig) -> Result<()> {
+    /// Updates a maker's configuration, re-initialising the maker with the new
+    /// settings. Rewrites config.toml via core's writer.
+    ///
+    /// `password` is the wallet-opening password, needed because the wallet is
+    /// re-opened during re-init. Zeroized after use, never stored.
+    pub fn update_config(
+        &mut self,
+        id: &MakerId,
+        config: MakerConfig,
+        password: Option<Zeroizing<String>>,
+    ) -> Result<()> {
         let config = Self::normalize_config(id, config);
         let previous = self
             .configs
@@ -724,8 +670,8 @@ impl MakerManager {
         self.pool.remove_maker(id);
         self.configs.remove(id);
 
-        // Re-create with new config
-        match self.create_maker_internal(id.clone(), config, true) {
+        // Re-create with new config (rewrites config.toml via core's writer)
+        match self.create_maker_internal(id.clone(), config, password.clone()) {
             Ok(()) => {
                 // Restart server if it was running before
                 if was_running {
@@ -746,7 +692,8 @@ impl MakerManager {
                     id,
                     e
                 );
-                if let Err(restore_err) = self.create_maker_internal(id.clone(), previous, true) {
+                if let Err(restore_err) = self.create_maker_internal(id.clone(), previous, password)
+                {
                     return Err(anyhow!(
                         "Failed to update maker '{id}': {e}; rollback also failed: {restore_err}"
                     ));
@@ -779,15 +726,12 @@ impl MakerManager {
         self.configs.keys().collect()
     }
 
-    /// Removes a maker entirely (stops server, removes from pool, deletes config)
+    /// Removes a maker entirely (stops server, removes from pool, unregisters it).
+    /// The maker's data dir (config.toml, wallets) is left untouched — same as makerd.
     pub fn remove_maker(&mut self, id: &MakerId) -> bool {
         self.pool.remove_maker(id);
         MakerLogWriter::unregister_maker(id);
-        let removed = self.configs.remove(id).is_some();
-        if removed {
-            self.persist();
-        }
-        removed
+        self.configs.remove(id).is_some()
     }
 
     /// Restarts a maker by stopping and re-initializing its server.
@@ -823,7 +767,7 @@ impl MakerManager {
         self.configs
             .get(maker_id)
             .and_then(|config| config.data_directory.clone())
-            .unwrap_or_else(|| Self::default_maker_data_dir(&maker_id.to_string()))
+            .unwrap_or_else(|| self.default_maker_data_dir(&maker_id.to_string()))
             .join("debug.log")
     }
 
@@ -949,7 +893,7 @@ mod tests {
         }
         std::fs::create_dir_all(&config_dir).unwrap();
 
-        let manager = MakerManager::new_for_testing(config_dir, None).unwrap();
+        let manager = MakerManager::new_for_testing(config_dir).unwrap();
         let network_listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let rpc_listener = TcpListener::bind("127.0.0.1:0").unwrap();
 
@@ -976,23 +920,69 @@ mod tests {
     }
 
     #[test]
-    fn auto_start_setting_persists() {
+    fn config_toml_roundtrip_and_discovery() {
+        let config_dir =
+            std::env::temp_dir().join(format!("maker-manager-toml-test-{}", std::process::id()));
+        if config_dir.exists() {
+            std::fs::remove_dir_all(&config_dir).unwrap();
+        }
+        let maker_dir = config_dir.join("maker1");
+        std::fs::create_dir_all(&maker_dir).unwrap();
+
+        // Write a maker config to <maker_dir>/config.toml via core's writer.
+        let config = MakerConfig {
+            data_directory: Some(maker_dir.clone()),
+            base_fee: 4200,
+            fidelity_feerate: 3.5,
+            ..MakerConfig::default()
+        };
+        super::persistence::write_maker_toml(&config).unwrap();
+        assert!(maker_dir.join("config.toml").exists());
+
+        // A fresh manager discovers the maker from the TOML alone.
+        let manager = MakerManager::new_for_testing(config_dir.clone()).unwrap();
+        let loaded = manager.get_maker_config("maker1").unwrap();
+        assert_eq!(loaded.base_fee, 4200);
+        assert_eq!(loaded.fidelity_feerate, 3.5);
+        assert_eq!(
+            loaded.wallet_name.as_deref(),
+            Some("maker1"),
+            "wallet name falls back to the maker id without a wallets/ dir"
+        );
+
+        std::fs::remove_dir_all(&config_dir).unwrap();
+    }
+
+    #[test]
+    fn hand_edited_config_toml_wins_on_reload() {
         let config_dir = std::env::temp_dir().join(format!(
-            "maker-manager-settings-test-{}",
+            "maker-manager-toml-edit-test-{}",
             std::process::id()
         ));
         if config_dir.exists() {
             std::fs::remove_dir_all(&config_dir).unwrap();
         }
-        std::fs::create_dir_all(&config_dir).unwrap();
+        let maker_dir = config_dir.join("maker1");
+        std::fs::create_dir_all(&maker_dir).unwrap();
 
-        let mut manager = MakerManager::new_for_testing(config_dir.clone(), None).unwrap();
-        assert!(manager.auto_start_makers());
+        let config = MakerConfig {
+            data_directory: Some(maker_dir.clone()),
+            ..MakerConfig::default()
+        };
+        super::persistence::write_maker_toml(&config).unwrap();
 
-        manager.set_auto_start_makers(false).unwrap();
+        // Simulate a hand edit (or a makerd run) against the same data dir.
+        let toml_path = maker_dir.join("config.toml");
+        let raw = std::fs::read_to_string(&toml_path).unwrap();
+        let edited = raw.replacen("base_fee = 1000", "base_fee = 7777", 1);
+        assert_ne!(raw, edited);
+        std::fs::write(&toml_path, edited).unwrap();
 
-        let manager = MakerManager::new_for_testing(config_dir, None).unwrap();
-        assert!(!manager.auto_start_makers());
+        let manager = MakerManager::new_for_testing(config_dir.clone()).unwrap();
+        let loaded = manager.get_maker_config("maker1").unwrap();
+        assert_eq!(loaded.base_fee, 7777);
+
+        std::fs::remove_dir_all(&config_dir).unwrap();
     }
 }
 

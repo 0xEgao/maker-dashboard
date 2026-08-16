@@ -21,11 +21,6 @@ export type MakerBackend = "bitcoind" | "electrum";
 export interface MakerInfoDetailed {
   id: string;
   state: MakerState;
-  backend: MakerBackend;
-  rpc: string;
-  zmq: string;
-  rpc_user: string;
-  rpc_password: string;
   wallet_name?: string;
   data_directory?: string;
   network_port: number;
@@ -35,20 +30,17 @@ export interface MakerInfoDetailed {
   min_swap_amount: number;
   fidelity_amount: number;
   fidelity_timelock: number;
+  /** sat/vB used for the fidelity bond transaction */
+  fidelity_feerate: number;
   required_confirms: number;
   base_fee: number;
   amount_relative_fee_pct: number;
   time_relative_fee_pct: number;
-  nostr_relays: string[];
 }
 
 export interface SuggestedMakerPorts {
   network_port: number;
   rpc_port: number;
-}
-
-export interface MakerAutoStartSettings {
-  enabled: boolean;
 }
 
 export interface BalanceInfo {
@@ -101,6 +93,7 @@ export interface StartupCheckRequest {
   rpc_user?: string;
   rpc_password?: string;
   zmq?: string;
+  electrum_url?: string;
   socks_port?: number;
   control_port?: number;
 }
@@ -178,15 +171,10 @@ export interface SwapReportDto {
 
 export interface CreateMakerRequest {
   id: string;
-  backend?: MakerBackend;
-  rpc?: string;
-  zmq?: string;
-  rpc_user?: string;
-  rpc_password?: string;
   tor_auth?: string;
   wallet_name?: string;
+  /** Wallet password — used once to encrypt/open the wallet, never stored. */
   password?: string;
-  data_directory?: string;
   network_port?: number;
   rpc_port?: number;
   socks_port?: number;
@@ -194,22 +182,19 @@ export interface CreateMakerRequest {
   min_swap_amount?: number;
   fidelity_amount?: number;
   fidelity_timelock?: number;
+  /** sat/vB for the fidelity bond transaction. Persisted per maker. */
+  fidelity_feerate?: number;
   required_confirms?: number;
   base_fee?: number;
   amount_relative_fee_pct?: number;
   time_relative_fee_pct?: number;
-  nostr_relays?: string[];
 }
 
 export interface UpdateMakerConfigRequest {
-  rpc?: string;
-  zmq?: string;
-  rpc_user?: string;
-  rpc_password?: string;
   tor_auth?: string;
   wallet_name?: string;
+  /** Wallet password — the wallet is re-opened during config update. Never stored. */
   password?: string;
-  data_directory?: string;
   network_port?: number;
   rpc_port?: number;
   socks_port?: number;
@@ -217,11 +202,12 @@ export interface UpdateMakerConfigRequest {
   min_swap_amount?: number;
   fidelity_amount?: number;
   fidelity_timelock?: number;
+  /** sat/vB for the fidelity bond transaction */
+  fidelity_feerate?: number;
   required_confirms?: number;
   base_fee?: number;
   amount_relative_fee_pct?: number;
   time_relative_fee_pct?: number;
-  nostr_relays?: string[];
 }
 export interface SendToAddressRequest {
   address: string;
@@ -245,9 +231,16 @@ export class ApiError extends Error {
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  // Only send a JSON content type when there actually is a body — an empty
+  // body with `Content-Type: application/json` is rejected by the server with
+  // a confusing "EOF while parsing a value" error.
+  const hasBody = options.body !== undefined && options.body !== null;
   const res = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json", ...options.headers },
     ...options,
+    headers: {
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      ...options.headers,
+    },
   });
 
   if (res.status === 401 && !path.startsWith("/auth/")) {
@@ -339,11 +332,6 @@ export const makers = {
   count: (): Promise<number> => get("/makers/count"),
   suggestedPorts: (): Promise<SuggestedMakerPorts> =>
     get("/makers/ports/suggested"),
-  autoStartSettings: (): Promise<MakerAutoStartSettings> =>
-    get("/makers/auto-start"),
-  updateAutoStartSettings: (
-    enabled: boolean,
-  ): Promise<MakerAutoStartSettings> => put("/makers/auto-start", { enabled }),
   get: (id: string): Promise<MakerInfoDetailed> => get(`/makers/${id}`),
   info: (id: string): Promise<MakerInfoDetailed> => get(`/makers/${id}/info`),
   create: (body: CreateMakerRequest): Promise<MakerInfo> =>
@@ -351,9 +339,37 @@ export const makers = {
   delete: (id: string): Promise<string> => del(`/makers/${id}`),
   updateConfig: (id: string, body: UpdateMakerConfigRequest): Promise<string> =>
     put(`/makers/${id}/config`, body),
-  start: (id: string): Promise<string> => post(`/makers/${id}/start`),
+  start: (id: string, password?: string): Promise<string> =>
+    post(`/makers/${id}/start`, password ? { password } : undefined),
   stop: (id: string): Promise<string> => post(`/makers/${id}/stop`),
   restart: (id: string): Promise<string> => post(`/makers/${id}/restart`),
+};
+
+// ─── Backend ──────────────────────────────────────────────────────────────────
+
+export interface BackendInfo {
+  /** false after every server start until the user submits the backend */
+  configured: boolean;
+  kind?: MakerBackend;
+  rpc?: string;
+  zmq?: string;
+  rpc_user?: string;
+  electrum_url?: string;
+}
+
+export interface SetBackendRequest {
+  kind: MakerBackend;
+  rpc?: string;
+  zmq?: string;
+  rpc_user?: string;
+  rpc_password?: string;
+  electrum_url?: string;
+}
+
+export const backend = {
+  get: (): Promise<BackendInfo> => get("/backend"),
+  /** Sets the runtime backend for ALL makers (memory only, never persisted). */
+  set: (body: SetBackendRequest): Promise<void> => post("/backend", body),
 };
 
 // ─── Wallet ───────────────────────────────────────────────────────────────────

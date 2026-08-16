@@ -80,9 +80,8 @@ Uninstalls the previous version, copies updated files, and installs again.
 2. Restart the app (right-click icon > Restart on the Umbrel homescreen)
 3. Confirm the maker config is still there
 
-Data is stored in two volumes:
-- `/root/.config/maker-dashboard` — dashboard config (`makers.json`)
-- `/root/.openswap` — openswap wallet and data directories
+Data is stored in a single volume:
+- `/root/.openswap` — dashboard auth (`auth.json`), per-maker `config.toml`, wallets and data directories
 
 ## Tor
 

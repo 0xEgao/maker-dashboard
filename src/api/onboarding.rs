@@ -59,19 +59,17 @@ fn run_check(body: StartupCheckRequest) -> StartupCheckResponse {
         StartupCheckKind::Rest => check_rest(&body),
         StartupCheckKind::Zmq => check_zmq(&body),
         StartupCheckKind::Tor => check_tor(&body),
-        StartupCheckKind::Electrum => check_electrum(),
+        StartupCheckKind::Electrum => check_electrum(&body),
     }
 }
 
-/// TCP reachability probe against the hardcoded Electrum server every maker
-/// uses for chain data. Uses a longer timeout than the local checks — this is
-/// a remote host.
-fn check_electrum() -> StartupCheckResponse {
+/// TCP reachability probe against the Electrum server makers use for chain
+/// data — either the one provided in the request or the hardcoded default.
+/// Uses a longer timeout than the local checks — this is a remote host.
+fn check_electrum(body: &StartupCheckRequest) -> StartupCheckResponse {
     let check = StartupCheckKind::Electrum;
-    let host_port = ELECTRUM_URL
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(ELECTRUM_URL);
+    let url = body.electrum_url.as_deref().unwrap_or(ELECTRUM_URL);
+    let host_port = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
     let addr = match first_socket_addr(host_port) {
         Ok(addr) => addr,
         Err(detail) => return fail(check, "Could not parse the Electrum address", detail),

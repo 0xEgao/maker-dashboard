@@ -3,7 +3,7 @@
 ## Authentication
 
 The dashboard is protected by a password that you choose on first run. The password is
-hashed with **Argon2id** and stored in `~/.config/maker-dashboard/auth.json`. On
+hashed with **Argon2id** and stored in `~/.openswap/auth.json`. On
 subsequent starts you log in via the browser; a valid session is required for every
 `/api/*` route.
 
@@ -14,14 +14,8 @@ valid session with HTTP 401.
 ### First-run setup
 
 On a fresh install (no `auth.json` present), `/setup` is reachable and accepts a
-password to initialize the dashboard. The chosen password is hashed with Argon2id and
-the AES-256-GCM key for `makers.json` is derived from it using a separate Argon2id-
-derived 32-byte salt. Once `auth.json` exists, `/setup` returns 409, only `/login` works.
-
-`/setup` also refuses if `makers.json` is already on disk: that combination (no
-`auth.json` but encrypted `makers.json` present) means the operator's encryption key
-has been lost and silently overwriting it would lock them out of existing data. Restore
-`auth.json` from backup, or explicitly delete `makers.json` to start fresh.
+password to initialize the dashboard. The chosen password is hashed with Argon2id.
+Once `auth.json` exists, `/setup` returns 409, only `/login` works.
 
 There is intentionally no token gating `/setup`. Before initialization there is no user
 data to protect: if a hostile party on the network races the operator and completes
@@ -30,21 +24,29 @@ again. To prevent races on multi-tenant or network-exposed hosts, restrict acces
 the dashboard port until setup is complete (e.g. keep `--allow-remote` off, or use a
 firewall rule).
 
-## Encrypted storage
+## At-rest data model
 
-Maker configs, including Bitcoin Core RPC credentials, wallet passwords, and Tor auth
-tokens, are stored encrypted at rest in `~/.config/maker-dashboard/makers.json`. The
-encryption key is derived from your password using Argon2id with a separate salt, so the
-file is opaque without the password. The file is written with mode `0600`.
+No secrets are stored by the dashboard beyond the login hash:
 
-`~/.config/maker-dashboard/auth.json` stores only the argon2id password hash and the
-two key-derivation salts, no plaintext credentials of any kind.
+- `~/.openswap/auth.json` stores only the argon2id password hash. There is no
+  encrypted state file anymore — nothing on disk is decryptable with the dashboard
+  password.
+- **Wallet passwords are never stored.** They are prompted per session when a maker's
+  wallet needs one, used only to open the wallet, and zeroized from dashboard memory
+  immediately after the wallet is loaded. (Note: openswap core itself currently keeps
+  its own copy in its in-memory `MakerServer` for the process lifetime.)
+- **Node credentials are never stored.** The backend connection (Bitcoin Core RPC
+  credentials or Electrum) is entered on the startup screen at every dashboard start
+  and held in memory only.
+- Per-maker settings live in `~/.openswap/{id}/config.toml` — openswap core's own
+  config file, exactly as makerd writes it. It contains ports, fees, and fidelity
+  settings; no credentials. (Caveat: `tor_auth_password`, if set, is a static field
+  core writes to this file in plaintext — same as makerd.)
 
 To change your password, use the **Change password** button in the dashboard nav bar,
-which calls `POST /api/auth/rotate-password`. The endpoint atomically re-encrypts
-`makers.json` with the new key and updates `auth.json` in a single operation. The
-new password takes effect immediately for the current session and on subsequent
-logins; no restart or env-var update is required.
+which calls `POST /api/auth/rotate-password`. The endpoint atomically rewrites
+`auth.json`. The new password takes effect immediately for the current session and on
+subsequent logins; no restart or env-var update is required.
 
 ## Localhost-only access
 

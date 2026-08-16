@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Bitcoin, Check, X } from "lucide-react";
 import Nav from "../components/Nav";
 import { SatsAmount } from "../components/SatsAmount";
+import { WalletPasswordModal } from "../components/WalletPasswordModal";
 import { ApiError, makers, monitoring, streamLogs, wallet } from "../api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -104,9 +105,12 @@ export default function MakerSetup() {
   const [minAmount, setMinAmount] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const walletPasswordRef = useRef<string | undefined>(undefined);
   const id = makerId!;
   const visibleLogs = useMemo(() => logs.filter(isInfoLog), [logs]);
 
@@ -187,12 +191,11 @@ export default function MakerSetup() {
       }
 
       try {
-        await makers.start(id);
+        await makers.start(id, walletPasswordRef.current);
       } catch (err) {
         if (!(err instanceof ApiError && err.status === 409)) {
-          setErrorMsg(
-            err instanceof Error ? err.message : "Failed to start maker",
-          );
+          // The wallet needs a password — prompt for it.
+          setShowPasswordPrompt(true);
           setStage("error");
           return;
         }
@@ -235,7 +238,15 @@ export default function MakerSetup() {
     return () => {
       stopStream?.();
     };
-  }, [id]);
+  }, [id, retryNonce]);
+
+  function handleWalletPasswordSubmit(password: string) {
+    walletPasswordRef.current = password || undefined;
+    setShowPasswordPrompt(false);
+    setErrorMsg(null);
+    setStage("starting");
+    setRetryNonce((n) => n + 1);
+  }
 
   // ─── Poll balance as fallback fund detection ───────────────────────────────
 
@@ -756,6 +767,13 @@ export default function MakerSetup() {
           </div>
         </div>
       </main>
+      {showPasswordPrompt && (
+        <WalletPasswordModal
+          submitting={false}
+          onSubmit={handleWalletPasswordSubmit}
+          onCancel={() => setShowPasswordPrompt(false)}
+        />
+      )}
     </div>
   );
 }

@@ -14,10 +14,11 @@ import MakerDetails from "./routes/makerDetails";
 import MakerSwapReportPage from "./routes/makerDetails/swapReport";
 import AddMaker from "./routes/addMaker";
 import MakerSetup from "./routes/makersetup";
+import BackendSetup from "./routes/backendSetup";
 import Login from "./routes/login";
 import Setup from "./routes/setup";
 import { Toast } from "./components/Toast";
-import { auth, monitoring } from "@/api";
+import { auth, backend, monitoring } from "@/api";
 
 interface AuthState {
   passwordExists: boolean | null;
@@ -73,6 +74,44 @@ function SetupLayout() {
   return <Outlet />;
 }
 
+function useBackendStatus(): { checking: boolean; configured: boolean } {
+  const [checking, setChecking] = useState(true);
+  const [configured, setConfigured] = useState(false);
+
+  useEffect(() => {
+    backend
+      .get()
+      .then((info) => {
+        setConfigured(info.configured);
+        setChecking(false);
+      })
+      .catch(() => {
+        setConfigured(false);
+        setChecking(false);
+      });
+  }, []);
+
+  return { checking, configured };
+}
+
+/** Guards authenticated app routes: forces backend setup until configured. */
+function BackendGateLayout() {
+  const { checking, configured } = useBackendStatus();
+
+  if (checking) return null;
+  if (!configured) return <Navigate to="/backend-setup" replace />;
+  return <Outlet />;
+}
+
+/** Guards /backend-setup itself: once configured, go back to the dashboard. */
+function BackendSetupLayout() {
+  const { checking, configured } = useBackendStatus();
+
+  if (checking) return null;
+  if (configured) return <Navigate to="/" replace />;
+  return <Outlet />;
+}
+
 function TorStartupToast() {
   const [torToast, setTorToast] = useState<string | null>(null);
 
@@ -118,14 +157,19 @@ function App() {
           <Route path="/login" element={<Login />} />
         </Route>
         <Route element={<AuthLayout />}>
-          <Route path="/" element={<Home />} />
-          <Route path="/makerDetails/:makerId" element={<MakerDetails />} />
-          <Route
-            path="/makerDetails/:makerId/swapReports/:swapId"
-            element={<MakerSwapReportPage />}
-          />
-          <Route path="/addMaker" element={<AddMaker />} />
-          <Route path="/makers/:makerId/setup" element={<MakerSetup />} />
+          <Route element={<BackendSetupLayout />}>
+            <Route path="/backend-setup" element={<BackendSetup />} />
+          </Route>
+          <Route element={<BackendGateLayout />}>
+            <Route path="/" element={<Home />} />
+            <Route path="/makerDetails/:makerId" element={<MakerDetails />} />
+            <Route
+              path="/makerDetails/:makerId/swapReports/:swapId"
+              element={<MakerSwapReportPage />}
+            />
+            <Route path="/addMaker" element={<AddMaker />} />
+            <Route path="/makers/:makerId/setup" element={<MakerSetup />} />
+          </Route>
         </Route>
       </Routes>
       <TorStartupToast />

@@ -204,7 +204,7 @@ export default function Dashboard({ core }: Props) {
         <div className="cs-card">
           <div className="cs-card-head">
             <h2>Configuration</h2>
-            <span className="cs-card-meta">Runtime paths</span>
+            <span className="cs-card-meta">Runtime config</span>
           </div>
           <div className="cs-card-body">
             <div className="cs-field-grid cols-3">
@@ -215,12 +215,16 @@ export default function Dashboard({ core }: Props) {
                 </div>
               </div>
               <div className="cs-card p-4">
-                <div className="cs-label mb-2">Bitcoin RPC</div>
-                <div className="cs-tx">{info?.rpc ?? "—"}</div>
+                <div className="cs-label mb-2">Fidelity Fee Rate</div>
+                <div className="cs-tx">
+                  {info ? `${info.fidelity_feerate} sat/vB` : "—"}
+                </div>
               </div>
               <div className="cs-card p-4">
-                <div className="cs-label mb-2">ZMQ</div>
-                <div className="cs-tx">{info?.zmq ?? "—"}</div>
+                <div className="cs-label mb-2">Minimum Swap</div>
+                <div className="cs-tx">
+                  {info ? <SatsAmount sats={info.min_swap_amount} /> : "—"}
+                </div>
               </div>
             </div>
           </div>

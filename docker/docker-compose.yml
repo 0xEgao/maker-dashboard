@@ -67,7 +67,6 @@ services:
       tor:
         condition: service_healthy
     volumes:
-      - dashboard-config:/home/appuser/.config/maker-dashboard
       - openswap-data:/home/appuser/.openswap
     environment:
       - MAKER_DASHBOARD_HOST=0.0.0.0
@@ -80,8 +79,6 @@ volumes:
   bitcoin-data:
     driver: local
   tor-data:
-    driver: local
-  dashboard-config:
     driver: local
   openswap-data:
     driver: local

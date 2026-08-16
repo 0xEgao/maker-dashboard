@@ -20,8 +20,7 @@ fn setup_app(config_dir: std::path::PathBuf) -> Router {
 }
 
 fn setup_app_with_secure_cookies(config_dir: std::path::PathBuf, secure_cookies: bool) -> Router {
-    let manager =
-        MakerManager::new_for_testing(config_dir.clone(), None).expect("MakerManager::new");
+    let manager = MakerManager::new_for_testing(config_dir.clone()).expect("MakerManager::new");
     let state = AppState {
         makers: Arc::new(Mutex::new(manager)),
         sessions: Arc::new(Mutex::new(SessionStore::new())),
@@ -34,7 +33,7 @@ fn setup_app_with_secure_cookies(config_dir: std::path::PathBuf, secure_cookies:
 }
 
 #[tokio::test]
-async fn setup_initializes_fresh_dashboard_and_persists_encrypted_state() {
+async fn setup_initializes_fresh_dashboard() {
     let config_dir = temp_config_dir();
     std::fs::create_dir_all(&config_dir).unwrap();
     let app = setup_app(config_dir.clone());
@@ -53,45 +52,32 @@ async fn setup_initializes_fresh_dashboard_and_persists_encrypted_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["password_exists"], true);
 
-    let makers = std::fs::read_to_string(config_dir.join("makers.json")).unwrap();
-    let makers: serde_json::Value = serde_json::from_str(&makers).unwrap();
-    assert_eq!(makers["v"], 1);
-    assert!(makers["data"].is_string());
+    // Login-only model: auth.json holds just the argon2id hash, and no
+    // makers.json is ever written (maker config lives in per-maker config.toml).
+    let auth = std::fs::read_to_string(config_dir.join("auth.json")).unwrap();
+    let auth: serde_json::Value = serde_json::from_str(&auth).unwrap();
+    assert!(auth["password_hash"].is_string());
+    assert!(auth.get("enc_salt").is_none());
+    assert!(!config_dir.join("makers.json").exists());
 }
 
 #[tokio::test]
-async fn setup_migrates_loaded_legacy_plaintext_maker_state() {
+async fn setup_refuses_when_already_initialized() {
     let config_dir = temp_config_dir();
     std::fs::create_dir_all(&config_dir).unwrap();
-    std::fs::write(config_dir.join("makers.json"), r#"{"makers":{}}"#).unwrap();
-    let app = setup_app(config_dir.clone());
-
-    let (status, body) = post(app, "/auth/setup", json!({ "password": "test-password" })).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!({ "success": true, "data": null }));
-
-    let makers = std::fs::read_to_string(config_dir.join("makers.json")).unwrap();
-    let makers: serde_json::Value = serde_json::from_str(&makers).unwrap();
-    assert_eq!(makers["v"], 1);
-    assert!(makers["data"].is_string());
-}
-
-#[tokio::test]
-async fn setup_refuses_locked_maker_state_without_auth_config() {
-    let config_dir = temp_config_dir();
-    std::fs::create_dir_all(&config_dir).unwrap();
-    std::fs::write(config_dir.join("makers.json"), r#"{"v":1,"data":"AA=="}"#).unwrap();
     let app = setup_app(config_dir);
 
-    let (status, body) = post(app, "/auth/setup", json!({ "password": "test-password" })).await;
+    let (status, _) = post(
+        app.clone(),
+        "/auth/setup",
+        json!({ "password": "test-password" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
 
+    let (status, body) = post(app, "/auth/setup", json!({ "password": "other-password" })).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["success"], false);
-    assert!(body["error"]
-        .as_str()
-        .unwrap()
-        .contains("makers.json already exists"));
 }
 
 #[tokio::test]

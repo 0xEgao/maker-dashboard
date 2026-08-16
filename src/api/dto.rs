@@ -1,30 +1,22 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use utoipa::ToSchema;
 
 use crate::maker_manager::{MakerBackend, MakerConfig, MakerInfo as ManagerMakerInfo, MakerState};
 
 /// Request body for `POST /api/makers`
+///
+/// All fields map to the maker's `<data_dir>/config.toml` (core's config
+/// file). `password` is the wallet password: used once to encrypt/open the
+/// wallet, zeroized after load, never persisted.
 #[derive(Deserialize, ToSchema)]
 pub struct CreateMakerRequest {
     #[schema(example = "maker1")]
     pub id: String,
-    /// Chain-data backend: "electrum" (default, no local node) or "bitcoind".
-    #[schema(example = "electrum")]
-    pub backend: Option<MakerBackend>,
-    #[schema(example = "127.0.0.1:38332")]
-    pub rpc: Option<String>,
-    #[schema(example = "tcp://127.0.0.1:28332")]
-    pub zmq: Option<String>,
-    #[schema(example = "user")]
-    pub rpc_user: Option<String>,
-    #[schema(example = "password")]
-    pub rpc_password: Option<String>,
     pub tor_auth: Option<String>,
     #[schema(example = "maker1")]
     pub wallet_name: Option<String>,
+    /// Wallet password. Runtime-only; never stored.
     pub password: Option<String>,
-    pub data_directory: Option<String>,
     #[schema(example = 6102)]
     pub network_port: Option<u16>,
     #[schema(example = 6103)]
@@ -39,6 +31,10 @@ pub struct CreateMakerRequest {
     pub fidelity_amount: Option<u64>,
     #[schema(example = 15000)]
     pub fidelity_timelock: Option<u32>,
+    /// Fidelity bond transaction fee rate in sat/vB, consumed by core.
+    /// Default: 2.0.
+    #[schema(example = 2.0)]
+    pub fidelity_feerate: Option<f64>,
     #[schema(example = 1)]
     pub required_confirms: Option<u32>,
     #[schema(example = 1000)]
@@ -47,25 +43,19 @@ pub struct CreateMakerRequest {
     pub amount_relative_fee_pct: Option<f64>,
     #[schema(example = 0.001)]
     pub time_relative_fee_pct: Option<f64>,
-    pub nostr_relays: Option<Vec<String>>,
 }
 
 /// Request body for `PUT /api/makers/{id}/config`
+///
+/// `password` is accepted because the wallet is re-opened during re-init;
+/// it is zeroized after use and never stored.
 #[derive(Deserialize, ToSchema)]
 pub struct UpdateMakerConfigRequest {
-    #[schema(example = "127.0.0.1:38332")]
-    pub rpc: Option<String>,
-    #[schema(example = "tcp://127.0.0.1:28332")]
-    pub zmq: Option<String>,
-    #[schema(example = "user")]
-    pub rpc_user: Option<String>,
-    #[schema(example = "password")]
-    pub rpc_password: Option<String>,
     pub tor_auth: Option<String>,
     #[schema(example = "maker1")]
     pub wallet_name: Option<String>,
+    /// Wallet password. Runtime-only; never stored.
     pub password: Option<String>,
-    pub data_directory: Option<String>,
     #[schema(example = 6102)]
     pub network_port: Option<u16>,
     #[schema(example = 6103)]
@@ -80,6 +70,9 @@ pub struct UpdateMakerConfigRequest {
     pub fidelity_amount: Option<u64>,
     #[schema(example = 15000)]
     pub fidelity_timelock: Option<u32>,
+    /// Fidelity bond transaction fee rate in sat/vB, consumed by core.
+    #[schema(example = 2.0)]
+    pub fidelity_feerate: Option<f64>,
     #[schema(example = 1)]
     pub required_confirms: Option<u32>,
     #[schema(example = 1000)]
@@ -88,27 +81,15 @@ pub struct UpdateMakerConfigRequest {
     pub amount_relative_fee_pct: Option<f64>,
     #[schema(example = 0.001)]
     pub time_relative_fee_pct: Option<f64>,
-    pub nostr_relays: Option<Vec<String>>,
 }
 
 impl UpdateMakerConfigRequest {
     /// Merges the update request on top of a base `MakerConfig`, overriding only provided fields.
     pub fn apply_to(self, base: MakerConfig) -> MakerConfig {
         MakerConfig {
-            backend: base.backend,
-            data_directory: self
-                .data_directory
-                .map(PathBuf::from)
-                .or(base.data_directory),
-            rpc: self.rpc.unwrap_or(base.rpc),
-            zmq: self.zmq.unwrap_or(base.zmq),
-            auth: match (self.rpc_user, self.rpc_password) {
-                (Some(u), Some(p)) => Some((u, p)),
-                _ => base.auth,
-            },
+            data_directory: base.data_directory,
             tor_auth: self.tor_auth.or(base.tor_auth),
             wallet_name: self.wallet_name.or(base.wallet_name),
-            password: self.password.or(base.password),
             network_port: self.network_port.unwrap_or(base.network_port),
             rpc_port: self.rpc_port.unwrap_or(base.rpc_port),
             socks_port: self.socks_port.unwrap_or(base.socks_port),
@@ -116,6 +97,7 @@ impl UpdateMakerConfigRequest {
             min_swap_amount: self.min_swap_amount.unwrap_or(base.min_swap_amount),
             fidelity_amount: self.fidelity_amount.unwrap_or(base.fidelity_amount),
             fidelity_timelock: self.fidelity_timelock.unwrap_or(base.fidelity_timelock),
+            fidelity_feerate: self.fidelity_feerate.unwrap_or(base.fidelity_feerate),
             required_confirms: self.required_confirms.unwrap_or(base.required_confirms),
             base_fee: self.base_fee.unwrap_or(base.base_fee),
             amount_relative_fee_pct: self
@@ -124,9 +106,58 @@ impl UpdateMakerConfigRequest {
             time_relative_fee_pct: self
                 .time_relative_fee_pct
                 .unwrap_or(base.time_relative_fee_pct),
-            nostr_relays: self.nostr_relays.unwrap_or(base.nostr_relays),
         }
     }
+}
+
+/// Request body for `POST /api/makers/{id}/start`
+///
+/// `password` is the wallet-opening password for encrypted wallets. It is
+/// used only during wallet load, zeroized immediately after, never stored.
+#[derive(Deserialize, ToSchema)]
+pub struct StartMakerRequest {
+    pub password: Option<String>,
+}
+
+/// Request body for `POST /api/backend`: sets the chain-data backend for all
+/// makers. Runtime-only — entered at every dashboard start, never persisted.
+#[derive(Deserialize, ToSchema)]
+pub struct SetBackendRequest {
+    /// "electrum" (default, no local node) or "bitcoind".
+    #[schema(example = "electrum")]
+    pub kind: MakerBackend,
+    /// Bitcoin Core RPC address (bitcoind only).
+    #[schema(example = "127.0.0.1:38332")]
+    pub rpc: Option<String>,
+    /// Bitcoin Core ZMQ address (bitcoind only).
+    #[schema(example = "tcp://127.0.0.1:28332")]
+    pub zmq: Option<String>,
+    /// Bitcoin Core RPC username (bitcoind only).
+    #[schema(example = "user")]
+    pub rpc_user: Option<String>,
+    /// Bitcoin Core RPC password (bitcoind only).
+    #[schema(example = "password")]
+    pub rpc_password: Option<String>,
+    /// Electrum server URL (electrum only). Default: ssl://electrum.citadelfoss.xyz:50002.
+    #[schema(example = "ssl://electrum.citadelfoss.xyz:50002")]
+    pub electrum_url: Option<String>,
+}
+
+/// Response for `GET /api/backend`. The RPC password is never returned.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BackendInfo {
+    /// Whether the backend has been set this session.
+    pub configured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<MakerBackend>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpc: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zmq: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpc_user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub electrum_url: Option<String>,
 }
 
 /// Request body for `POST /api/makers/{id}/send`
@@ -180,16 +211,6 @@ pub struct SuggestedMakerPorts {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub struct MakerAutoStartSettings {
-    pub enabled: bool,
-}
-
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct UpdateMakerAutoStartSettingsRequest {
-    pub enabled: bool,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MakerStateDto {
     Running,
@@ -210,11 +231,6 @@ impl From<MakerState> for MakerStateDto {
 pub struct MakerInfoDetailed {
     pub id: String,
     pub state: MakerStateDto,
-    pub backend: MakerBackend,
-    pub rpc: String,
-    pub zmq: String,
-    pub rpc_user: String,
-    pub rpc_password: String,
     pub wallet_name: Option<String>,
     pub data_directory: Option<String>,
     pub network_port: u16,
@@ -224,29 +240,20 @@ pub struct MakerInfoDetailed {
     pub min_swap_amount: u64,
     pub fidelity_amount: u64,
     pub fidelity_timelock: u32,
+    pub fidelity_feerate: f64,
     pub required_confirms: u32,
     pub base_fee: u64,
     pub amount_relative_fee_pct: f64,
     pub time_relative_fee_pct: f64,
-    pub nostr_relays: Vec<String>,
 }
 
 impl From<ManagerMakerInfo> for MakerInfoDetailed {
     fn from(info: ManagerMakerInfo) -> Self {
         let config = info.config;
-        let (rpc_user, rpc_password) = match &config.auth {
-            Some((user, password)) => (user.clone(), password.clone()),
-            None => ("user".to_string(), "password".to_string()),
-        };
 
         Self {
             id: info.id,
             state: info.state.into(),
-            backend: config.backend,
-            rpc: config.rpc,
-            zmq: config.zmq,
-            rpc_user,
-            rpc_password,
             wallet_name: config.wallet_name,
             data_directory: config.data_directory.and_then(|d| {
                 if let Ok(path) = d.canonicalize() {
@@ -261,11 +268,11 @@ impl From<ManagerMakerInfo> for MakerInfoDetailed {
             min_swap_amount: config.min_swap_amount,
             fidelity_amount: config.fidelity_amount,
             fidelity_timelock: config.fidelity_timelock,
+            fidelity_feerate: config.fidelity_feerate,
             required_confirms: config.required_confirms,
             base_fee: config.base_fee,
             amount_relative_fee_pct: config.amount_relative_fee_pct,
             time_relative_fee_pct: config.time_relative_fee_pct,
-            nostr_relays: config.nostr_relays,
         }
     }
 }
@@ -395,6 +402,10 @@ pub struct StartupCheckRequest {
     pub rpc_password: Option<String>,
     #[schema(example = "tcp://127.0.0.1:28332")]
     pub zmq: Option<String>,
+    /// Electrum server URL to probe (electrum check only). Defaults to the
+    /// hardcoded server when omitted.
+    #[schema(example = "ssl://electrum.citadelfoss.xyz:50002")]
+    pub electrum_url: Option<String>,
     #[schema(example = 9050)]
     pub socks_port: Option<u16>,
     #[schema(example = 9051)]

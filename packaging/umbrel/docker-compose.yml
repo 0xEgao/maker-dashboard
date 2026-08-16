@@ -24,7 +24,6 @@ services:
     depends_on:
       - tor
     volumes:
-      - ${APP_DATA_DIR}/data/config:/root/.config/maker-dashboard
       - ${APP_DATA_DIR}/data/openswap:/root/.openswap
     environment:
       MAKER_DASHBOARD_HOST: 0.0.0.0

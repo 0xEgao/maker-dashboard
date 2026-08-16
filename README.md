@@ -106,33 +106,30 @@ By default the server listens on `http://127.0.0.1:3000`. Open that in your brow
 
 On first start (no `auth.json` present), visit `/setup` in your browser and choose a
 password. The password is hashed with argon2id and stored in
-`~/.config/maker-dashboard/auth.json`, and maker configs are encrypted at rest with an
-AES-256-GCM key derived from it.
+`~/.openswap/auth.json`. It protects dashboard access only — no maker secrets are
+stored at rest: wallet passwords are never written to disk (you are prompted per
+session when a wallet needs one), and the backend connection (Bitcoin Core RPC
+credentials or Electrum) is entered on the startup screen at every launch and held
+in memory only.
 
-On subsequent starts the dashboard goes straight to the login screen. After a successful
-login the browser holds a session cookie valid for 24 hours.
+On subsequent starts the dashboard goes to the login screen, then to the startup
+screen (Tor check + backend selection). After a successful login the browser holds
+a session cookie valid for 24 hours.
 
 See [SECURITY.md](SECURITY.md) for the full security model, including the threat model
 around the unauthenticated setup window.
 
-## First-Run Flow
+## Startup Flow
 
-On first launch the server logs:
+Every server start shows the startup screen after login:
 
-```text
-First-run setup required. Visit http://127.0.0.1:3000/setup to initialize.
-```
-
-Open the URL, choose a password, and you'll be logged in.
-
-If there are no registered makers, the home page opens a guided onboarding flow. The
-onboarding wizard helps you:
-
-- Verify Bitcoin Core RPC connectivity
-- Verify Bitcoin Core REST availability
-- Verify the configured ZMQ endpoint
-- Verify local Tor SOCKS and control ports
-- Create your first maker from the browser
+1. Tor status check (the dashboard starts or detects Tor automatically).
+2. Backend selection: Bitcoin Core or Electrum, with sensible defaults prefilled.
+3. First run (no makers yet): you land on the create-maker page.
+   On restart: makers are restored from their `~/.openswap/<id>/config.toml`
+   files and you land on the dashboard home page. Makers auto-start if their
+   wallet opens without a password; otherwise you are prompted for the wallet
+   password and the maker starts after unlock.
 
 After a maker is created, the UI takes you to a setup screen that tails live logs while
 the maker initializes and waits for the fidelity bond flow to complete.
@@ -150,7 +147,7 @@ From the web UI you can:
 - Update maker configuration
 - Remove a maker registration from the dashboard without deleting its wallet data
 
-Registered makers are restored on dashboard restart. If **Auto-start makers** is enabled in the dashboard, restored makers start automatically after login/startup; if it is disabled, they come back stopped until you start them again.
+Registered makers are restored on dashboard restart from their per-maker `config.toml` files. Every maker auto-starts if its wallet file can be opened without a password; wallets that need a password stay stopped until you provide it, and start right after unlock.
 
 ## Configuration
 
@@ -164,33 +161,55 @@ Runtime options can be set with CLI flags or environment variables:
 | `--spa-index`              | `MAKER_DASHBOARD_SPA_INDEX`              | `frontend/build/client/index.html` | SPA fallback file                          |
 | `--allow-remote`           | `MAKER_DASHBOARD_ALLOW_REMOTE`           | `false`                            | Allow non-localhost requests               |
 | `--disable-secure-cookies` | `MAKER_DASHBOARD_DISABLE_SECURE_COOKIES` | `false`                            | Allow session cookies over plain HTTP      |
-| `--log-filter`             | `MAKER_DASHBOARD_LOG_FILTER`             | `tower_http=debug,info`            | Tracing filter directive                   |
+| `--log-filter`             | `MAKER_DASHBOARD_LOG_FILTER`             | `off`                              | Tracing filter directive for stdout logs   |
 | `--no-color`               | `MAKER_DASHBOARD_NO_COLOR`               | `false`                            | Disable ANSI colors in logs                |
-| `--config-dir`             | `MAKER_DASHBOARD_CONFIG_DIR`             | platform default                   | Dashboard config directory                 |
+| `-d, --data-directory`     | `MAKER_DASHBOARD_DATA_DIR`               | `~/.openswap`                      | Dashboard + maker data directory           |
+
+### Logging
+
+By default the dashboard prints nothing to stdout except the URL it is listening on:
+
+```
+Dashboard available at http://127.0.0.1:3000
+```
+
+This also silences the embedded Tor process, which writes straight to stdout
+bypassing the log pipeline. Passing any `--log-filter` value other than `off`
+re-enables its console output too.
+
+To see logs on stdout, pass a filter with `--log-filter` (or `MAKER_DASHBOARD_LOG_FILTER`):
+
+```bash
+maker-dashboard --log-filter info                      # dashboard + maker activity
+maker-dashboard --log-filter debug                     # more verbose
+maker-dashboard --log-filter tower_http=debug,info     # previous default: HTTP request tracing
+```
+
+Per-maker log files are unaffected by `--log-filter`: each maker always writes
+`<data_dir>/<id>/debug.log` at full verbosity (all levels including DEBUG/TRACE),
+which is what the log views in the UI read.
+Use `--no-color` to disable ANSI colors when stdout logs are enabled.
 
 By default the dashboard only accepts connections from the local machine. If you enable `--allow-remote`, place a TLS-terminating reverse proxy in front. the built-in password auth is the only protection on the wire. If you must access the dashboard over plain HTTP, use `--disable-secure-cookies` so browsers keep the login session cookie.
 
-Dashboard-managed files:
+Dashboard-managed files (all under `~/.openswap` by default, mirroring makerd's layout):
 
-- Auth config (argon2id hash + salts): `~/.config/maker-dashboard/auth.json`
-- Encrypted maker configs: `~/.config/maker-dashboard/makers.json`
-- Per-maker logs: `~/.openswap/{id}/debug.log`
+- Auth config (argon2id hash only): `~/.openswap/auth.json`
+- Per-maker core config: `~/.openswap/{id}/config.toml` (written/read via openswap core's own config APIs, exactly like makerd)
+- Per-maker wallets, logs, and data: `~/.openswap/{id}/`
 
-Maker wallet and data directories are configured per maker and may differ from the dashboard config directory.
+A maker named `maker` uses `~/.openswap/maker` — makerd's default data dir — so it is fully interoperable with the `makerd`/`maker-cli` tools.
 
 ## Adding A Maker
 
-The UI will ask for:
+The chain-data backend (Bitcoin Core RPC credentials or Electrum) is chosen once on the
+startup screen and applies to all makers. Per maker, the UI will ask for:
 
-- A unique maker ID
-- Bitcoin Core RPC address and credentials
-- Bitcoin ZMQ address
-- Optional wallet password and wallet name
-- Optional custom data directory
+- A unique maker ID (its data dir becomes `~/.openswap/<id>`)
+- Optional wallet password (encrypts the wallet; never stored — you will be asked for it on each start) and wallet name
 - Maker network and RPC ports
 - Optional Tor SOCKS and control ports
-- Fee and fidelity-bond settings
-- Optional Nostr relays
+- Fee and fidelity-bond settings (including the fidelity fee rate)
 
 If you run multiple makers on one machine, make sure each maker uses unique network and RPC ports.
 
@@ -214,7 +233,7 @@ the dashboard reach services on your host is host networking:
 docker run -d \
   --name maker-dashboard \
   --network host \
-  -v maker-dashboard-config:/home/appuser/.config/maker-dashboard \
+  -v maker-dashboard-data:/home/appuser/.openswap \
   openswap/maker-dashboard:latest
 ```
 
@@ -226,13 +245,13 @@ Bitcoin/Tor endpoints (e.g. `host.docker.internal` on Docker Desktop):
 docker run -d \
   --name maker-dashboard \
   -p 3000:3000 \
-  -v maker-dashboard-config:/home/appuser/.config/maker-dashboard \
+  -v maker-dashboard-data:/home/appuser/.openswap \
   openswap/maker-dashboard:latest \
   ./maker-dashboard --host 0.0.0.0 --disable-secure-cookies
 ```
 
-The named volume persists `auth.json` and your encrypted maker configs across
-container restarts and upgrades. To upgrade, pull a newer tag and recreate the
+The named volume persists `auth.json` and all maker data (config.toml files,
+wallets, logs) across container restarts and upgrades. To upgrade, pull a newer tag and recreate the
 container:
 
 ```sh
@@ -255,9 +274,7 @@ docker compose up --build -d
 
 This starts a custom signet bitcoind, a Tor daemon, and the maker dashboard, all sharing the same network namespace. The dashboard is available at `http://localhost:3000`.
 
-On first run, visit `http://localhost:3000/setup` and choose a password. On subsequent runs, log in normally.
-
-When creating a maker, use:
+On first run, visit `http://localhost:3000/setup` and choose a password. On subsequent runs, log in normally. On every start, the startup screen asks for the backend — select Bitcoin Core and use:
 
 - RPC: `127.0.0.1:38332`, ZMQ: `tcp://127.0.0.1:28332`
 - RPC credentials: `user` / `password`

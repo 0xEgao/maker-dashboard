@@ -5,7 +5,7 @@ use std::net::TcpListener;
 use axum::http::StatusCode;
 use serde_json::json;
 
-use super::{delete, get, post, put, temp_config_dir, test_app};
+use super::{delete, get, post, put, test_app};
 
 // 200 / success-path
 
@@ -68,49 +68,57 @@ async fn suggested_ports_skip_taken_defaults() {
 }
 
 #[tokio::test]
-async fn auto_start_setting_defaults_to_enabled() {
-    let (status, body) = get(test_app(), "/makers/auto-start").await;
+async fn backend_is_unconfigured_initially() {
+    let (status, body) = get(test_app(), "/backend").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body,
-        json!({ "success": true, "data": { "enabled": true } })
+        json!({ "success": true, "data": { "configured": false } })
     );
 }
 
 #[tokio::test]
-async fn auto_start_setting_can_be_updated() {
-    let app = test_app();
-
-    let (put_status, put_body) = put(
-        app.clone(),
-        "/makers/auto-start",
-        json!({ "enabled": false }),
+async fn set_backend_bitcoind_requires_both_credentials() {
+    let (status, body) = post(
+        test_app(),
+        "/backend",
+        json!({ "kind": "bitcoind", "rpc_user": "alice" }),
     )
     .await;
-    assert_eq!(put_status, StatusCode::OK);
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!body["success"].as_bool().unwrap());
     assert_eq!(
-        put_body,
-        json!({ "success": true, "data": { "enabled": false } })
+        body["error"],
+        "Both rpc_user and rpc_password must be provided for the bitcoind backend"
     );
+}
 
-    let (get_status, get_body) = get(app, "/makers/auto-start").await;
-    assert_eq!(get_status, StatusCode::OK);
-    assert_eq!(
-        get_body,
-        json!({ "success": true, "data": { "enabled": false } })
-    );
+#[tokio::test]
+async fn set_backend_electrum_succeeds_and_hides_nothing_sensitive() {
+    let app = test_app();
+    let (status, body) = post(app.clone(), "/backend", json!({ "kind": "electrum" })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["configured"], true);
+    assert_eq!(body["data"]["kind"], "electrum");
+
+    let (status, body) = get(app, "/backend").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["configured"], true);
+    // The RPC password is never exposed
+    assert!(body["data"].get("rpc_password").is_none());
 }
 
 #[tokio::test]
 async fn list_and_count_stay_empty_after_failed_create() {
     let app = test_app();
-    // This fails because there is no Bitcoin node at 127.0.0.1:19998
+    // bitcoind backend pointing at a dead node: create fails at init.
     post(
         app.clone(),
-        "/makers",
-        json!({ "id": "fail", "backend": "bitcoind", "rpc_user": "u", "rpc_password": "p", "rpc": "127.0.0.1:19998", "zmq": "tcp://127.0.0.1:19997", "data_directory": temp_config_dir() }),
+        "/backend",
+        json!({ "kind": "bitcoind", "rpc": "127.0.0.1:19998", "zmq": "tcp://127.0.0.1:19997", "rpc_user": "u", "rpc_password": "p" }),
     )
     .await;
+    post(app.clone(), "/makers", json!({ "id": "fail" })).await;
 
     let (list_status, list_body) = get(app.clone(), "/makers").await;
     assert_eq!(list_status, StatusCode::OK);
@@ -121,60 +129,45 @@ async fn list_and_count_stay_empty_after_failed_create() {
     assert_eq!(count_body["data"], 0);
 }
 
-// electrum backend (default): no node or credentials needed
+// create requires the backend to be set first (startup screen)
 
 #[tokio::test]
-async fn create_with_electrum_backend_succeeds_without_credentials() {
-    let (status, body) = post(
-        test_app(),
-        "/makers",
-        json!({ "id": "test", "data_directory": temp_config_dir() }),
-    )
-    .await;
+async fn create_without_backend_set_is_500() {
+    let (status, body) = post(test_app(), "/makers", json!({ "id": "test" })).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(!body["success"].as_bool().unwrap());
+    assert!(body["error"]
+        .as_str()
+        .unwrap()
+        .contains("Backend is not configured"));
+}
+
+// electrum backend: no node or credentials needed
+
+#[tokio::test]
+async fn create_with_electrum_backend_succeeds() {
+    let app = test_app();
+    let (status, _) = post(app.clone(), "/backend", json!({ "kind": "electrum" })).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = post(app, "/makers", json!({ "id": "test" })).await;
     assert_eq!(status, StatusCode::CREATED);
     assert!(body["success"].as_bool().unwrap());
-}
-
-// validation errors (400)
-
-#[tokio::test]
-async fn create_without_credentials_is_400() {
-    let (status, body) = post(
-        test_app(),
-        "/makers",
-        json!({ "id": "test", "backend": "bitcoind", "rpc": "127.0.0.1:18332", "zmq": "tcp://127.0.0.1:28332" }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(!body["success"].as_bool().unwrap());
-    assert_eq!(
-        body["error"],
-        "Both rpc_user and rpc_password must be provided together"
-    );
-}
-
-#[tokio::test]
-async fn create_with_only_rpc_user_is_400() {
-    let (status, body) = post(
-        test_app(),
-        "/makers",
-        json!({ "id": "test", "backend": "bitcoind", "rpc_user": "alice" }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(!body["success"].as_bool().unwrap());
 }
 
 // 500 when Bitcoin is unavailable (bitcoind backend)
 
 #[tokio::test]
-async fn create_with_credentials_returns_500_without_bitcoin() {
-    let (status, body) = post(
-        test_app(),
-        "/makers",
-        json!({ "id": "test", "backend": "bitcoind", "rpc_user": "alice", "rpc_password": "pass", "rpc": "127.0.0.1:19998", "zmq": "tcp://127.0.0.1:19997", "data_directory": temp_config_dir() }),
+async fn create_returns_500_without_bitcoin() {
+    let app = test_app();
+    post(
+        app.clone(),
+        "/backend",
+        json!({ "kind": "bitcoind", "rpc": "127.0.0.1:19998", "zmq": "tcp://127.0.0.1:19997", "rpc_user": "alice", "rpc_password": "pass" }),
     )
     .await;
+
+    let (status, body) = post(app, "/makers", json!({ "id": "test" })).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(!body["success"].as_bool().unwrap());
     assert!(body["error"].is_string());
@@ -182,19 +175,23 @@ async fn create_with_credentials_returns_500_without_bitcoin() {
 
 #[tokio::test]
 async fn create_skips_taken_local_network_port() {
+    let app = test_app();
+    post(
+        app.clone(),
+        "/backend",
+        json!({ "kind": "bitcoind", "rpc_user": "alice", "rpc_password": "pass" }),
+    )
+    .await;
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
 
     let (status, body) = post(
-        test_app(),
+        app,
         "/makers",
         json!({
             "id": "test",
-            "backend": "bitcoind",
-            "rpc_user": "alice",
-            "rpc_password": "pass",
             "network_port": port,
-            "data_directory": temp_config_dir(),
         }),
     )
     .await;
@@ -209,19 +206,23 @@ async fn create_skips_taken_local_network_port() {
 
 #[tokio::test]
 async fn create_skips_taken_local_rpc_port() {
+    let app = test_app();
+    post(
+        app.clone(),
+        "/backend",
+        json!({ "kind": "bitcoind", "rpc_user": "alice", "rpc_password": "pass" }),
+    )
+    .await;
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
 
     let (status, body) = post(
-        test_app(),
+        app,
         "/makers",
         json!({
             "id": "test",
-            "backend": "bitcoind",
-            "rpc_user": "alice",
-            "rpc_password": "pass",
             "rpc_port": port,
-            "data_directory": temp_config_dir(),
         }),
     )
     .await;

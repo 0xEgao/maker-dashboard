@@ -8,7 +8,7 @@ mod tor_manager;
 mod utils;
 
 use clap::Parser;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use cli::Cli;
 use server::{Server, ServerConfig};
@@ -19,23 +19,34 @@ async fn main() {
     let args = Cli::parse();
 
     let config_dir = args
-        .config_dir
-        .unwrap_or_else(maker_dashboard::utils::default_config_dir);
+        .data_directory
+        .unwrap_or_else(maker_dashboard::utils::default_data_dir);
 
     let log_writer = MakerLogWriter::new();
 
     tracing_subscriber::registry()
+        // Stdout layer: off by default, enabled via --log-filter.
         .with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(!args.no_color)
                 .with_thread_names(true)
                 .with_target(false)
-                .with_writer(log_writer),
+                .with_writer(std::io::stdout)
+                .with_filter(tracing_subscriber::EnvFilter::new(&args.log_filter)),
         )
-        .with(tracing_subscriber::EnvFilter::new(&args.log_filter))
+        // Per-maker file layer: always on at full verbosity (trace and up),
+        // feeds the UI log views.
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_thread_names(true)
+                .with_target(false)
+                .with_writer(log_writer)
+                .with_filter(tracing_subscriber::filter::LevelFilter::TRACE),
+        )
         .init();
 
-    tracing::info!("Using config directory: {}", config_dir.display());
+    tracing::info!("Using data directory: {}", config_dir.display());
     let config = ServerConfig {
         host: args.host,
         port: args.port,
@@ -44,6 +55,7 @@ async fn main() {
         localhost_only: !args.allow_remote,
         secure_cookies: !args.disable_secure_cookies,
         config_dir,
+        quiet_tor: args.log_filter.trim() == "off",
     };
 
     match Server::new(config) {

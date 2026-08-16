@@ -1,50 +1,34 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use aes_gcm::{
-    aead::{Aead, KeyInit},
-    Aes256Gcm, Nonce,
-};
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rand::{thread_rng, RngCore};
 use serde::{Deserialize, Serialize};
 
-/// Stored in `{config_dir}/auth.json`.
+/// Stored in `{config_dir}/auth.json`. Login credential only — nothing is
+/// encrypted at rest anymore, so no key-derivation material lives here.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthConfig {
     /// argon2id PHC string (includes its own salt).
     pub password_hash: String,
-    /// base64-encoded 32-byte salt used for AES key derivation.
-    pub enc_salt: String,
 }
 
 impl AuthConfig {
     /// Creates a new `AuthConfig` by hashing `password` with argon2id.
-    /// Generates a separate random 32-byte `enc_salt` for key derivation.
     pub fn new(password: &str) -> anyhow::Result<Self> {
         let mut rng = thread_rng();
 
         // Hash password for verification.
         let salt = SaltString::generate(&mut rng);
-        let argon2 = Argon2::default();
-        let password_hash = argon2
+        let password_hash = Argon2::default()
             .hash_password(password.as_bytes(), &salt)
             .map_err(|e| anyhow::anyhow!("argon2 hash error: {e}"))?
             .to_string();
 
-        // Independent 32-byte salt for key derivation.
-        let mut enc_salt_bytes = [0u8; 32];
-        rng.fill_bytes(&mut enc_salt_bytes);
-        let enc_salt = B64.encode(enc_salt_bytes);
-
-        Ok(Self {
-            password_hash,
-            enc_salt,
-        })
+        Ok(Self { password_hash })
     }
 
     /// Loads from `{config_dir}/auth.json`. Returns `None` if the file doesn't exist.
@@ -102,20 +86,6 @@ impl AuthConfig {
             Err(e) => Err(anyhow::anyhow!("argon2 verify error: {e}")),
         }
     }
-
-    /// Derives a 32-byte AES-256-GCM key from `password` using Argon2id raw API + `enc_salt`.
-    pub fn derive_key(&self, password: &str) -> anyhow::Result<[u8; 32]> {
-        let salt_bytes = B64
-            .decode(&self.enc_salt)
-            .map_err(|e| anyhow::anyhow!("base64 decode enc_salt: {e}"))?;
-
-        let mut output_key = [0u8; 32];
-        Argon2::default()
-            .hash_password_into(password.as_bytes(), &salt_bytes, &mut output_key)
-            .map_err(|e| anyhow::anyhow!("argon2 key derivation error: {e}"))?;
-
-        Ok(output_key)
-    }
 }
 
 /// In-memory session management.
@@ -159,43 +129,4 @@ impl Default for SessionStore {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Encrypts `plaintext` with AES-256-GCM.
-/// Returns `nonce (12 bytes) ++ ciphertext`.
-pub fn aes_encrypt(key: &[u8; 32], plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| anyhow::anyhow!("AES-256-GCM key error: {e}"))?;
-
-    let mut nonce_bytes = [0u8; 12];
-    thread_rng().fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
-
-    let ciphertext = cipher
-        .encrypt(nonce, plaintext)
-        .map_err(|e| anyhow::anyhow!("AES-GCM encrypt error: {e}"))?;
-
-    let mut output = Vec::with_capacity(12 + ciphertext.len());
-    output.extend_from_slice(&nonce_bytes);
-    output.extend_from_slice(&ciphertext);
-    Ok(output)
-}
-
-/// Decrypts data produced by [`aes_encrypt`].
-/// Input must be at least 12 bytes (`nonce ++ ciphertext`).
-pub fn aes_decrypt(key: &[u8; 32], data: &[u8]) -> anyhow::Result<Vec<u8>> {
-    if data.len() < 12 {
-        anyhow::bail!("aes_decrypt: input too short (< 12 bytes)");
-    }
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| anyhow::anyhow!("AES-256-GCM key error: {e}"))?;
-
-    let (nonce_bytes, ciphertext) = data.split_at(12);
-    let nonce = Nonce::from_slice(nonce_bytes);
-
-    let plaintext = cipher
-        .decrypt(nonce, ciphertext)
-        .map_err(|e| anyhow::anyhow!("AES-GCM decrypt error: {e}"))?;
-
-    Ok(plaintext)
 }

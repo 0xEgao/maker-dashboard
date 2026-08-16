@@ -518,7 +518,7 @@ async fn get_logs_stream(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-/// Test connectivity to the Bitcoin Core RPC endpoint configured for a maker.
+/// Test connectivity to the dashboard's Bitcoin Core RPC backend.
 /// Returns node info on success, or `connected: false` if the RPC is unreachable.
 /// Works whether the maker is running or stopped.
 #[utoipa::path(
@@ -542,27 +542,34 @@ async fn get_rpc_status(
             Json(ApiResponse::err(format!("Maker '{id}' not found"))),
         );
     }
-    let config = match manager.get_config(&id) {
-        Some(c) => c,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ApiResponse::err(format!(
-                    "Config for maker '{id}' not found"
-                ))),
-            )
-        }
-    };
+    let backend = manager.backend().cloned();
     drop(manager);
+
+    let not_configured = || {
+        (
+            StatusCode::OK,
+            Json(ApiResponse::ok(RpcStatusInfo {
+                connected: false,
+                version: None,
+                network: None,
+                block_height: None,
+                sync_progress: None,
+            })),
+        )
+    };
+
+    let Some(backend) = backend else {
+        return not_configured();
+    };
+    if backend.kind != crate::maker_manager::MakerBackend::Bitcoind {
+        return not_configured();
+    }
 
     let result = tokio::task::spawn_blocking(move || {
         use openswap::bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 
-        let auth = match config.auth {
-            Some((user, pass)) => Auth::UserPass(user, pass),
-            None => Auth::None,
-        };
-        let url = format!("http://{}", config.rpc);
+        let auth = Auth::UserPass(backend.rpc_user, backend.rpc_password);
+        let url = format!("http://{}", backend.rpc);
         let client = Client::new(&url, auth).map_err(|e| e.to_string())?;
         let chain_info = client.get_blockchain_info().map_err(|e| e.to_string())?;
         let net_info = client.get_network_info().map_err(|e| e.to_string())?;
@@ -912,7 +919,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut manager = MakerManager::new_for_testing(config_dir.clone(), None).unwrap();
+        let mut manager = MakerManager::new_for_testing(config_dir.clone()).unwrap();
         for id in ["alpha", "beta"] {
             manager.insert_config_for_testing(
                 id.to_string(),

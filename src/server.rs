@@ -13,7 +13,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use crate::api::{api_router, ApiDoc, AppState};
 use crate::middlewares;
-use crate::utils::default_config_dir;
+use crate::utils::default_data_dir;
 
 /// Frontend assets embedded into the binary at compile time (release builds).
 /// The directory must exist when compiling with this feature — the release
@@ -60,8 +60,11 @@ pub struct ServerConfig {
     pub localhost_only: bool,
     /// Whether to set the Secure attribute on session cookies
     pub secure_cookies: bool,
-    /// Application config/data directory (e.g. ~/.config/maker-dashboard)
+    /// Application data directory (default: ~/.openswap)
     pub config_dir: PathBuf,
+    /// Silence the embedded Tor's console output (it bypasses tracing and
+    /// writes straight to stdout). Set when stdout logging is off.
+    pub quiet_tor: bool,
 }
 
 impl Default for ServerConfig {
@@ -73,7 +76,8 @@ impl Default for ServerConfig {
             spa_index: PathBuf::from("frontend/build/client/index.html"),
             localhost_only: true,
             secure_cookies: true,
-            config_dir: default_config_dir(),
+            config_dir: default_data_dir(),
+            quiet_tor: true,
         }
     }
 }
@@ -88,27 +92,26 @@ impl Server {
     /// Creates a new server with the given config and a fresh MakerManager.
     ///
     /// Bootstrap flow:
-    /// - If `auth.json` exists, the dashboard is already initialized. The
-    ///   maker manager starts in the "locked" state — no AES key is held until
-    ///   the user logs in via `POST /api/auth/login`.
+    /// - If `auth.json` exists, the dashboard is initialized; login is required.
     /// - If `auth.json` does NOT exist, the dashboard waits for
     ///   `POST /api/auth/setup` to complete first-run setup.
+    /// - Makers are discovered from per-maker config.toml files and registered
+    ///   as stopped; they init/start once the backend is set from the startup
+    ///   screen (`POST /api/backend`).
     pub fn new(config: ServerConfig) -> anyhow::Result<Self> {
         use crate::auth::{AuthConfig, SessionStore};
 
         std::fs::create_dir_all(&config.config_dir).map_err(|e| {
             anyhow::anyhow!(
-                "Failed to create config directory {}: {e}",
+                "Failed to create data directory {}: {e}",
                 config.config_dir.display()
             )
         })?;
 
         let auth_config = AuthConfig::load(&config.config_dir)?;
 
-        // The maker manager always starts WITHOUT a key. If makers.json is
-        // encrypted, the load is deferred until login. If makers.json is
-        // missing or legacy plaintext, the deferred-load path is a no-op.
-        let manager = crate::maker_manager::MakerManager::new(config.config_dir.clone(), None)?;
+        let manager =
+            crate::maker_manager::MakerManager::new(config.config_dir.clone(), config.quiet_tor)?;
 
         if auth_config.is_none() {
             tracing::info!(
@@ -189,6 +192,10 @@ impl Server {
         let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
             anyhow::anyhow!("Failed to bind to {addr}. Is the port already in use? {e}")
         })?;
+
+        // Always shown, even with the default-off stdout log filter: this is
+        // the one piece of information the user needs.
+        println!("Dashboard available at http://{addr}");
 
         axum::serve(
             listener,

@@ -17,21 +17,6 @@ interface Props {
   onSaved?: () => void;
 }
 
-function portFromEndpoint(value: string | undefined, fallback: number) {
-  if (!value) return fallback;
-  const match = value.match(/:(\d+)(?:\/)?$/);
-  const port = match ? Number(match[1]) : Number(value);
-  return Number.isInteger(port) && port > 0 ? port : fallback;
-}
-
-function bitcoinRpcEndpoint(port: number) {
-  return `127.0.0.1:${port}`;
-}
-
-function zmqEndpoint(port: number) {
-  return `tcp://127.0.0.1:${port}`;
-}
-
 function isValidPort(value: number) {
   return Number.isInteger(value) && value >= 1 && value <= 65535;
 }
@@ -79,12 +64,8 @@ export default function Settings({ id, onSaved }: Props) {
   const navigate = useNavigate();
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // ── Bitcoin Core RPC ──────────────────────────────────────────────────────
-  const [bitcoinRpcPort, setBitcoinRpcPort] = useState(38332);
-  const [zmqPort, setZmqPort] = useState(28332);
-  const [rpcUser, setRpcUser] = useState("");
-  const [rpcPassword, setRpcPassword] = useState("");
-  const [dataDir, setDataDir] = useState("");
+  // ── Wallet ──────────────────────────────────────────────────────────────────
+  const [walletPassword, setWalletPassword] = useState("");
 
   // ── Tor ───────────────────────────────────────────────────────────────────
   const [torAuth, setTorAuth] = useState("");
@@ -99,13 +80,15 @@ export default function Settings({ id, onSaved }: Props) {
   const [minSwapAmount, setMinSwapAmount] = useState(10000);
   const [requiredConfirms, setRequiredConfirms] = useState(1);
   const [baseFee, setBaseFee] = useState(1000);
-  const [amountRelativeFeePct, setAmountRelativeFeePct] = useState(0.025);
-  const [timeRelativeFeePct, setTimeRelativeFeePct] = useState(0.001);
+  // Relative fees are edited as plain percentages (0.25 = 0.25%); the value
+  // sent to the API is the entered number divided by 100.
+  const [amountRelativeFeePct, setAmountRelativeFeePct] = useState(0.25);
+  const [timeRelativeFeePct, setTimeRelativeFeePct] = useState(0.01);
   const [fidelityAmount, setFidelityAmount] = useState(10000);
   const [fidelityTimelock, setFidelityTimelock] = useState(15000);
 
   // ── UI state ──────────────────────────────────────────────────────────────
-  const [showRpcPassword, setShowRpcPassword] = useState(false);
+  const [showWalletPassword, setShowWalletPassword] = useState(false);
   const [showTorAuth, setShowTorAuth] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{
@@ -126,11 +109,6 @@ export default function Settings({ id, onSaved }: Props) {
     makers
       .get(id)
       .then((info: MakerInfoDetailed) => {
-        setBitcoinRpcPort(portFromEndpoint(info.rpc, 38332));
-        setZmqPort(portFromEndpoint(info.zmq, 28332));
-        setRpcUser(info.rpc_user || "user");
-        setRpcPassword(info.rpc_password || "password");
-        setDataDir(info.data_directory ?? "");
         setNetworkPort(info.network_port ?? 6102);
         setRpcPort(info.rpc_port ?? 6103);
         setSocksPort(info.socks_port ?? 9050);
@@ -138,8 +116,8 @@ export default function Settings({ id, onSaved }: Props) {
         setMinSwapAmount(info.min_swap_amount ?? 10000);
         setRequiredConfirms(info.required_confirms ?? 1);
         setBaseFee(info.base_fee ?? 1000);
-        setAmountRelativeFeePct(info.amount_relative_fee_pct ?? 0.025);
-        setTimeRelativeFeePct(info.time_relative_fee_pct ?? 0.001);
+        setAmountRelativeFeePct((info.amount_relative_fee_pct ?? 0.0025) * 100);
+        setTimeRelativeFeePct((info.time_relative_fee_pct ?? 0.0001) * 100);
         setFidelityAmount(info.fidelity_amount ?? 10000);
         setFidelityTimelock(info.fidelity_timelock ?? 15000);
       })
@@ -147,16 +125,7 @@ export default function Settings({ id, onSaved }: Props) {
   }, [id]);
 
   function validate(): string | null {
-    if (
-      ![
-        networkPort,
-        rpcPort,
-        bitcoinRpcPort,
-        zmqPort,
-        socksPort,
-        controlPort,
-      ].every(isValidPort)
-    )
+    if (![networkPort, rpcPort, socksPort, controlPort].every(isValidPort))
       return "Port values must be between 1 and 65535";
     if (new Set([networkPort, rpcPort]).size !== 2)
       return "Network Port and RPC Port must be different";
@@ -181,12 +150,8 @@ export default function Settings({ id, onSaved }: Props) {
     setSaveResult(null);
     try {
       await makers.updateConfig(id, {
-        rpc: bitcoinRpcEndpoint(bitcoinRpcPort),
-        zmq: zmqEndpoint(zmqPort),
-        rpc_user: rpcUser || undefined,
-        rpc_password: rpcPassword || undefined,
         tor_auth: torAuth || undefined,
-        data_directory: dataDir || undefined,
+        password: walletPassword || undefined,
         network_port: networkPort,
         rpc_port: rpcPort,
         socks_port: socksPort,
@@ -196,8 +161,8 @@ export default function Settings({ id, onSaved }: Props) {
         fidelity_timelock: fidelityTimelock,
         required_confirms: requiredConfirms,
         base_fee: baseFee,
-        amount_relative_fee_pct: amountRelativeFeePct,
-        time_relative_fee_pct: timeRelativeFeePct,
+        amount_relative_fee_pct: amountRelativeFeePct / 100,
+        time_relative_fee_pct: timeRelativeFeePct / 100,
       });
 
       setSaveResult({
@@ -205,6 +170,7 @@ export default function Settings({ id, onSaved }: Props) {
         msg: "Config saved — maker is stopping, rewriting config.toml, and restarting…",
       });
       setTorAuth("");
+      setWalletPassword("");
       setTimeout(() => onSaved?.(), 2000);
     } catch (e) {
       setSaveResult({
@@ -270,92 +236,42 @@ export default function Settings({ id, onSaved }: Props) {
 
       <section className="cs-card">
         <div className="cs-card-head">
-          <h2>Bitcoin Core RPC, ZMQ &amp; Tor Configuration</h2>
+          <h2>Wallet &amp; Tor Configuration</h2>
           <span className="cs-card-meta">Edit · runtime config</span>
         </div>
 
         <div className="cs-subsection">
           <div className="cs-subtitle text-[var(--cs-orange)]">
             <span className="cs-pip" />
-            Bitcoin Core RPC
+            Wallet
           </div>
           <div className="cs-field-grid">
-            <div className="cs-field">
-              <label>RPC Port</label>
-              <input
-                type="number"
-                value={bitcoinRpcPort}
-                min={1}
-                max={65535}
-                onChange={(e) => setBitcoinRpcPort(Number(e.target.value))}
-                className="cs-input"
-              />
-              <p className="cs-hint">
-                Default ports — <code>8332</code> mainnet · <code>18332</code>{" "}
-                testnet · <code>38332</code> signet
-              </p>
-            </div>
-
-            <div className="cs-field">
-              <label>ZMQ Port</label>
-              <input
-                type="number"
-                value={zmqPort}
-                min={1}
-                max={65535}
-                onChange={(e) => setZmqPort(Number(e.target.value))}
-                className="cs-input"
-              />
-              <p className="cs-hint">
-                Used for raw block and raw transaction ZMQ publishers
-              </p>
-            </div>
-
-            <div className="cs-field">
-              <label>RPC Username</label>
-              <input
-                type="text"
-                value={rpcUser}
-                onChange={(e) => setRpcUser(e.target.value)}
-                placeholder=""
-                className="cs-input"
-              />
-            </div>
-
-            <div className="cs-field">
-              <label>RPC Password</label>
+            <div className="cs-field cs-span-2">
+              <label>Wallet Password</label>
               <div className="cs-input-wrap">
                 <input
-                  type={showRpcPassword ? "text" : "password"}
-                  value={rpcPassword}
-                  onChange={(e) => setRpcPassword(e.target.value)}
-                  placeholder=""
+                  type={showWalletPassword ? "text" : "password"}
+                  value={walletPassword}
+                  onChange={(e) => setWalletPassword(e.target.value)}
+                  placeholder="Leave blank if the wallet is not encrypted"
                   className="cs-input"
                 />
                 <button
                   type="button"
-                  onClick={() => setShowRpcPassword(!showRpcPassword)}
+                  onClick={() => setShowWalletPassword(!showWalletPassword)}
                   className="cs-eye"
                   aria-label={
-                    showRpcPassword ? "Hide RPC password" : "Show RPC password"
+                    showWalletPassword
+                      ? "Hide wallet password"
+                      : "Show wallet password"
                   }
                 >
-                  <EyeIcon open={showRpcPassword} />
+                  <EyeIcon open={showWalletPassword} />
                 </button>
               </div>
-            </div>
-
-            <div className="cs-field cs-span-2">
-              <label>Data Directory</label>
-              <input
-                type="text"
-                value={dataDir}
-                onChange={(e) => setDataDir(e.target.value)}
-                placeholder="~/.openswap/maker"
-                className="cs-input"
-              />
               <p className="cs-hint">
-                Defaults to <code>~/.openswap/&lt;id&gt;</code>
+                The wallet is re-opened when the config is saved — enter the
+                wallet password for encrypted wallets. Never stored.
               </p>
             </div>
           </div>
@@ -666,43 +582,43 @@ export default function Settings({ id, onSaved }: Props) {
 
               <div className="cs-field">
                 <label htmlFor="amountRelativeFeePct">
-                  Amount Relative Fee
+                  Amount Relative Fee (%)
                 </label>
                 <input
                   id="amountRelativeFeePct"
                   type="number"
                   min={0}
-                  max={1}
+                  max={100}
                   step="0.001"
                   value={amountRelativeFeePct}
-                  placeholder="0.025"
+                  placeholder="0.25"
                   onChange={(e) =>
                     setAmountRelativeFeePct(Number(e.target.value))
                   }
                   className="cs-input"
                 />
                 <p className="cs-hint">
-                  Decimal 0–1 · <code>0.025</code> = 2.5%
+                  Plain percentage · <code>0.25</code> = 0.25%
                 </p>
               </div>
 
               <div className="cs-field cs-span-2">
-                <label htmlFor="timeRelativeFeePct">Time Relative Fee</label>
+                <label htmlFor="timeRelativeFeePct">Time Relative Fee (%)</label>
                 <input
                   id="timeRelativeFeePct"
                   type="number"
                   min={0}
-                  max={1}
+                  max={100}
                   step="0.001"
                   value={timeRelativeFeePct}
-                  placeholder="0.001"
+                  placeholder="0.01"
                   onChange={(e) =>
                     setTimeRelativeFeePct(Number(e.target.value))
                   }
                   className="cs-input"
                 />
                 <p className="cs-hint">
-                  Decimal 0–1 · <code>0.001</code> = 0.1% per block
+                  Plain percentage · <code>0.01</code> = 0.01% per block
                 </p>
               </div>
             </div>
@@ -773,8 +689,10 @@ export default function Settings({ id, onSaved }: Props) {
       <div className="cs-save-bar">
         <p className="cs-hint max-w-3xl">
           Saving stops the maker, writes the new config to{" "}
-          <code>config.toml</code>, then restarts it automatically. Password
-          fields are write-only — leave blank to keep the current value.
+          <code>config.toml</code>, then restarts it automatically. The wallet
+          password is only used to re-open an encrypted wallet during the save
+          and is never stored. The Tor auth password is write-only — leave blank
+          to keep the current value.
         </p>
         <button
           type="button"

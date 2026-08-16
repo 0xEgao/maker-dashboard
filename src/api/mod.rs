@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod backend;
 pub mod bitcoind;
 pub mod dto;
 pub mod fidelity;
@@ -83,8 +84,6 @@ impl FromRef<AppState> for bool {
     paths(
         makers::list_makers,
         makers::create_maker,
-        makers::get_auto_start_settings,
-        makers::update_auto_start_settings,
         makers::get_maker_count,
         makers::get_maker,
         makers::delete_maker,
@@ -115,6 +114,8 @@ impl FromRef<AppState> for bool {
         bitcoind::start,
         bitcoind::stop,
         onboarding::run_startup_check,
+        backend::get_backend,
+        backend::set_backend,
         monitoring::get_tor_status,
         monitoring::verify_deniability,
         health_check,
@@ -122,10 +123,11 @@ impl FromRef<AppState> for bool {
     components(schemas(
         dto::CreateMakerRequest,
         dto::UpdateMakerConfigRequest,
+        dto::StartMakerRequest,
+        dto::SetBackendRequest,
+        dto::BackendInfo,
         dto::SendToAddressRequest,
         dto::MakerInfo,
-        dto::MakerAutoStartSettings,
-        dto::UpdateMakerAutoStartSettingsRequest,
         dto::MakerInfoDetailed,
         dto::MakerStateDto,
         dto::BalanceInfo,
@@ -165,6 +167,7 @@ pub fn api_router() -> Router<AppState> {
         .merge(monitoring::routes())
         .merge(bitcoind::routes())
         .merge(onboarding::routes())
+        .merge(backend::routes())
         .merge(auth::routes())
         .route("/health", get(health_check))
 }

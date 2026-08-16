@@ -5,7 +5,7 @@ use axum::{extract::State, http::StatusCode, routing::get, routing::post, Json, 
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
-use crate::maker_manager::{MakerConfig, MakerManager};
+use crate::maker_manager::{MakerBackend, MakerManager, RuntimeBackend};
 
 use super::{
     dto::{ApiResponse, BitcoindStatusInfo, StartBitcoindRequest},
@@ -21,16 +21,16 @@ pub fn routes() -> Router<AppState> {
         .route("/bitcoind/stop", post(stop))
 }
 
-/// Try to connect to a bitcoind RPC endpoint using a maker config.
+/// Try to connect to bitcoind RPC using the runtime backend config.
 /// Returns the chain name (e.g. "regtest") on success.
-fn probe_rpc(config: &MakerConfig) -> Option<String> {
+fn probe_rpc(backend: &RuntimeBackend) -> Option<String> {
     use openswap::bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 
-    let auth = match &config.auth {
-        Some((u, p)) => Auth::UserPass(u.clone(), p.clone()),
-        None => Auth::None,
-    };
-    let url = format!("http://{}", config.rpc);
+    if backend.kind != MakerBackend::Bitcoind {
+        return None;
+    }
+    let auth = Auth::UserPass(backend.rpc_user.clone(), backend.rpc_password.clone());
+    let url = format!("http://{}", backend.rpc);
     let client = Client::new(&url, auth).ok()?;
     let info = client.get_blockchain_info().ok()?;
     Some(info.chain.to_string())
@@ -74,11 +74,11 @@ fn probe_standard_ports() -> Option<String> {
 
 async fn auto_start_makers_after_bitcoind_start(state: Arc<Mutex<MakerManager>>) {
     sleep(MAKER_AUTO_START_RETRY_DELAY).await;
-    state.lock().await.auto_start_configured_makers();
+    state.lock().await.retry_stopped_makers();
 }
 
-/// Get bitcoind status by probing RPC connectivity via any registered maker's config.
-/// Falls back to the dashboard-managed process state if no makers are configured.
+/// Get bitcoind status by probing RPC connectivity via the runtime backend config.
+/// Falls back to the dashboard-managed process state if the backend is unreachable.
 #[utoipa::path(
     get,
     path = "/api/bitcoind/status",
@@ -90,19 +90,16 @@ async fn auto_start_makers_after_bitcoind_start(state: Arc<Mutex<MakerManager>>)
 async fn get_status(
     State(state): State<Arc<Mutex<MakerManager>>>,
 ) -> Json<ApiResponse<BitcoindStatusInfo>> {
-    // Collect maker configs (drop lock before blocking work)
-    let configs: Vec<MakerConfig> = {
+    // Grab the runtime backend (drop lock before blocking work)
+    let backend = {
         let mgr = state.lock().await;
-        mgr.list_makers()
-            .into_iter()
-            .filter_map(|id| mgr.get_config(id))
-            .collect()
+        mgr.backend().cloned()
     };
 
-    // Try each maker's RPC config in a blocking thread
+    // Probe in a blocking thread
     let result = tokio::task::spawn_blocking(move || {
-        for config in &configs {
-            if let Some(network) = probe_rpc(config) {
+        if let Some(backend) = &backend {
+            if let Some(network) = probe_rpc(backend) {
                 return Some(network);
             }
         }
@@ -115,7 +112,7 @@ async fn get_status(
     let (managed, managed_network) = state.lock().await.bitcoind_status();
 
     if let Some(network) = result {
-        // Reachable via maker RPC config — may be an external process, not dashboard-managed
+        // Reachable via the backend RPC config — may be an external process, not dashboard-managed
         return Json(ApiResponse::ok(BitcoindStatusInfo {
             running: true,
             network: Some(network),

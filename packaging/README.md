@@ -17,7 +17,6 @@ Run with Docker directly:
 docker run -d \
   --name maker-dashboard \
   --network host \
-  --volume ~/.config/maker-dashboard:/root/.config/maker-dashboard \
   --volume ~/.openswap:/root/.openswap \
   --env MAKER_DASHBOARD_HOST=127.0.0.1 \
   --env MAKER_DASHBOARD_PORT=3000 \

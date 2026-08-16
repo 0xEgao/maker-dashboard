@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
@@ -8,22 +7,21 @@ use axum::{
     Json, Router,
 };
 use tokio::sync::Mutex;
+use zeroize::Zeroizing;
 
 use super::{
     dto::{
-        ApiResponse, CreateMakerRequest, MakerAutoStartSettings, MakerInfo, MakerInfoDetailed,
-        SuggestedMakerPorts, UpdateMakerAutoStartSettingsRequest, UpdateMakerConfigRequest,
+        ApiResponse, CreateMakerRequest, MakerInfo, MakerInfoDetailed, StartMakerRequest,
+        SuggestedMakerPorts, UpdateMakerConfigRequest,
     },
     AppState,
 };
-use crate::maker_manager::{MakerBackend, MakerConfig, MakerManager, MakerManagerError};
+use crate::maker_manager::{MakerConfig, MakerManager, MakerManagerError};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/makers", get(list_makers))
         .route("/makers", post(create_maker))
-        .route("/makers/auto-start", get(get_auto_start_settings))
-        .route("/makers/auto-start", put(update_auto_start_settings))
         .route("/makers/ports/suggested", get(get_suggested_ports))
         .route("/makers/count", get(get_maker_count))
         .route("/makers/{id}", get(get_maker))
@@ -81,50 +79,6 @@ async fn get_suggested_ports(
     }
 }
 
-/// Get whether makers should automatically start after restore/startup.
-#[utoipa::path(
-    get, path = "/api/makers/auto-start", tag = "makers",
-    responses((status = 200, description = "Maker auto-start setting", body = ApiResponse<MakerAutoStartSettings>))
-)]
-pub async fn get_auto_start_settings(
-    State(state): State<Arc<Mutex<MakerManager>>>,
-) -> Json<ApiResponse<MakerAutoStartSettings>> {
-    let mgr = state.lock().await;
-    Json(ApiResponse::ok(MakerAutoStartSettings {
-        enabled: mgr.auto_start_makers(),
-    }))
-}
-
-/// Set whether makers should automatically start after restore/startup.
-#[utoipa::path(
-    put, path = "/api/makers/auto-start", tag = "makers",
-    request_body = UpdateMakerAutoStartSettingsRequest,
-    responses(
-        (status = 200, description = "Maker auto-start setting updated", body = ApiResponse<MakerAutoStartSettings>),
-        (status = 500, description = "Internal error", body = ApiResponse<MakerAutoStartSettings>)
-    )
-)]
-pub async fn update_auto_start_settings(
-    State(state): State<Arc<Mutex<MakerManager>>>,
-    Json(body): Json<UpdateMakerAutoStartSettingsRequest>,
-) -> (StatusCode, Json<ApiResponse<MakerAutoStartSettings>>) {
-    let mut mgr = state.lock().await;
-    match mgr.set_auto_start_makers(body.enabled) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(ApiResponse::ok(MakerAutoStartSettings {
-                enabled: body.enabled,
-            })),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::err(format!(
-                "Failed to save maker auto-start setting: {e}"
-            ))),
-        ),
-    }
-}
-
 fn validate_maker_config(config: &MakerConfig) -> Result<(), String> {
     for (name, port) in [
         ("network_port", config.network_port),
@@ -167,6 +121,9 @@ fn validate_maker_config(config: &MakerConfig) -> Result<(), String> {
     if config.fidelity_amount == 0 {
         return Err("fidelity_amount must be greater than 0".to_string());
     }
+    if !config.fidelity_feerate.is_finite() || config.fidelity_feerate <= 0.0 {
+        return Err("fidelity_feerate must be a positive number (sat/vB)".to_string());
+    }
 
     Ok(())
 }
@@ -203,33 +160,10 @@ async fn create_maker(
         );
     }
 
-    // The Electrum backend (see maker_manager::ELECTRUM_URL) needs no local
-    // node; the bitcoind backend requires Bitcoin Core RPC credentials.
-    let backend = body.backend.unwrap_or(MakerBackend::Electrum);
-    let auth = match (body.rpc_user, body.rpc_password) {
-        (Some(u), Some(p)) => Some((u, p)),
-        _ if backend == MakerBackend::Bitcoind => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse::err(
-                    "Both rpc_user and rpc_password must be provided together",
-                )),
-            );
-        }
-        _ => None,
-    };
-
     let mut config = MakerConfig {
-        backend,
-        auth,
-        data_directory: body.data_directory.map(PathBuf::from),
-        rpc: body.rpc.unwrap_or_else(|| "127.0.0.1:38332".to_string()),
-        zmq: body
-            .zmq
-            .unwrap_or_else(|| "tcp://127.0.0.1:28332".to_string()),
+        data_directory: None,
         tor_auth: body.tor_auth,
         wallet_name: body.wallet_name,
-        password: body.password,
         network_port: body.network_port.unwrap_or(6102),
         rpc_port: body.rpc_port.unwrap_or(6103),
         socks_port: body.socks_port.unwrap_or(9050),
@@ -237,11 +171,13 @@ async fn create_maker(
         min_swap_amount: body.min_swap_amount.unwrap_or(10000),
         fidelity_amount: body.fidelity_amount.unwrap_or(10000),
         fidelity_timelock: body.fidelity_timelock.unwrap_or(15000),
+        fidelity_feerate: body
+            .fidelity_feerate
+            .unwrap_or(crate::maker_manager::DEFAULT_FEE_RATE),
         required_confirms: body.required_confirms.unwrap_or(1),
         base_fee: body.base_fee.unwrap_or(1000),
-        amount_relative_fee_pct: body.amount_relative_fee_pct.unwrap_or(0.025),
-        time_relative_fee_pct: body.time_relative_fee_pct.unwrap_or(0.001),
-        nostr_relays: body.nostr_relays.unwrap_or_default(),
+        amount_relative_fee_pct: body.amount_relative_fee_pct.unwrap_or(0.0025),
+        time_relative_fee_pct: body.time_relative_fee_pct.unwrap_or(0.0001),
     };
 
     if let Err(e) = validate_maker_config(&config) {
@@ -269,7 +205,8 @@ async fn create_maker(
         }
     }
 
-    match mgr.create_maker(trimmed_id.clone(), config) {
+    let password = body.password.map(Zeroizing::new);
+    match mgr.create_maker(trimmed_id.clone(), config, password) {
         Ok(()) => (
             StatusCode::CREATED,
             Json(ApiResponse::ok(MakerInfo { id: trimmed_id })),
@@ -363,6 +300,7 @@ async fn update_config(
         }
     };
 
+    let password = body.password.clone().map(Zeroizing::new);
     let config = body.apply_to(base);
 
     if let Err(e) = validate_maker_config(&config) {
@@ -383,7 +321,7 @@ async fn update_config(
         }
     }
 
-    match mgr.update_config(&id, config) {
+    match mgr.update_config(&id, config, password) {
         Ok(()) => (
             StatusCode::OK,
             Json(ApiResponse::ok(format!(
@@ -435,9 +373,13 @@ async fn get_maker_count(
 }
 
 /// Start a stopped maker
+///
+/// Accepts an optional JSON body with the wallet password. The password is
+/// used only to open the wallet, zeroized immediately after, never stored.
 #[utoipa::path(
     post, path = "/api/makers/{id}/start", tag = "makers",
     params(("id" = String, Path, description = "Maker ID")),
+    request_body = StartMakerRequest,
     responses(
         (status = 200, description = "Maker started",          body = ApiResponse<String>),
         (status = 404, description = "Maker not found",        body = ApiResponse<String>),
@@ -448,9 +390,11 @@ async fn get_maker_count(
 async fn start_maker(
     State(state): State<Arc<Mutex<MakerManager>>>,
     Path(id): Path<String>,
+    body: Option<Json<StartMakerRequest>>,
 ) -> (StatusCode, Json<ApiResponse<String>>) {
+    let password = body.and_then(|Json(b)| b.password).map(Zeroizing::new);
     let mut mgr = state.lock().await;
-    match mgr.start_maker(&id) {
+    match mgr.start_maker(&id, password) {
         Ok(()) => (
             StatusCode::OK,
             Json(ApiResponse::ok(format!("Maker '{id}' started"))),

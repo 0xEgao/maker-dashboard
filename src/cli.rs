@@ -48,19 +48,21 @@ pub struct Cli {
     )]
     pub disable_secure_cookies: bool,
 
-    /// Log filter directive (e.g. "debug", "tower_http=debug,info")
-    #[arg(
-        long,
-        default_value = "tower_http=debug,info",
-        env = "MAKER_DASHBOARD_LOG_FILTER"
-    )]
+    /// Log filter directive for stdout (e.g. "info", "debug", "tower_http=debug,info").
+    /// Defaults to "off": no logs on stdout, only the dashboard URL is printed.
+    /// Per-maker log files (<data_dir>/<id>/debug.log) are always written at
+    /// full verbosity (all levels including DEBUG/TRACE) regardless of this
+    /// setting.
+    #[arg(long, default_value = "off", env = "MAKER_DASHBOARD_LOG_FILTER")]
     pub log_filter: String,
 
     /// Disable ANSI colors in log output (useful for log files / CI)
     #[arg(long, default_value_t = false, env = "MAKER_DASHBOARD_NO_COLOR")]
     pub no_color: bool,
 
-    /// Application config and data directory. Stores maker configs and wallet data.
-    #[arg(long, env = "MAKER_DASHBOARD_CONFIG_DIR")]
-    pub config_dir: Option<PathBuf>,
+    /// Application data directory. Stores dashboard state (auth.json) and, by
+    /// default, each maker's data directory (`<data_dir>/<id>/`, including its
+    /// config.toml). Mirrors makerd's `-d/--data-directory`; default: `~/.openswap`.
+    #[arg(long, short = 'd', env = "MAKER_DASHBOARD_DATA_DIR")]
+    pub data_directory: Option<PathBuf>,
 }

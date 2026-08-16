@@ -11,6 +11,7 @@ import {
 } from "../../api";
 import { type Tab } from "./types";
 import { ErrorBanner } from "./components";
+import { WalletPasswordModal } from "../../components/WalletPasswordModal";
 import Dashboard from "./dashboard";
 import Wallet from "./wallet";
 import Swaps from "./history";
@@ -73,6 +74,8 @@ export default function MakerDetails() {
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [walletRefreshToken, setWalletRefreshToken] = useState(0);
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [startRetrying, setStartRetrying] = useState(false);
 
   function copyTorAddress() {
     if (!torAddress) return;
@@ -159,12 +162,35 @@ export default function MakerDetails() {
   async function handleStartStop() {
     setActionLoading(true);
     try {
-      await (isRunning ? makers.stop(id) : makers.start(id));
-      await loadCore();
+      if (isRunning) {
+        await makers.stop(id);
+        await loadCore();
+      } else {
+        try {
+          await makers.start(id);
+          await loadCore();
+        } catch {
+          // Start failed — the wallet needs a password; prompt for it.
+          setShowPasswordPrompt(true);
+        }
+      }
     } catch (e) {
       alert(e instanceof Error ? e.message : "Action failed");
     } finally {
       setActionLoading(false);
+    }
+  }
+
+  async function handleWalletPasswordSubmit(password: string) {
+    setStartRetrying(true);
+    try {
+      await makers.start(id, password || undefined);
+      setShowPasswordPrompt(false);
+      await loadCore();
+    } catch {
+      // Wrong password or other failure — keep the prompt open.
+    } finally {
+      setStartRetrying(false);
     }
   }
 
@@ -216,13 +242,9 @@ export default function MakerDetails() {
                 <div
                   className={`cs-subaddr ${torHostname ? "copyable" : ""}`}
                   onClick={copyTorAddress}
-                  title={torHostname ?? info?.rpc ?? undefined}
+                  title={torHostname ?? undefined}
                 >
-                  {torHostname
-                    ? truncateMiddle(torHostname)
-                    : info?.rpc
-                      ? `RPC ${info.rpc}`
-                      : "Maker instance"}
+                  {torHostname ? truncateMiddle(torHostname) : "Maker instance"}
                 </div>
               </div>
               <div className="cs-actions">
@@ -288,6 +310,13 @@ export default function MakerDetails() {
           </div>
         </div>
       </main>
+      {showPasswordPrompt && (
+        <WalletPasswordModal
+          submitting={startRetrying}
+          onSubmit={handleWalletPasswordSubmit}
+          onCancel={() => setShowPasswordPrompt(false)}
+        />
+      )}
     </div>
   );
 }

@@ -29,7 +29,7 @@ impl TorManager {
         }
     }
 
-    pub fn detect_or_start(config_dir: &Path) -> anyhow::Result<Self> {
+    pub fn detect_or_start(config_dir: &Path, quiet: bool) -> anyhow::Result<Self> {
         tracing::info!(
             "Checking if Tor is already running (SOCKS:{} control:{})",
             SOCKS_PORT,
@@ -71,16 +71,21 @@ impl TorManager {
         let data_dir = config_dir.join("tor").join("data");
         std::fs::create_dir_all(&data_dir)?;
 
-        let handle = libtor::Tor::new()
-            .flag(libtor::TorFlag::DataDirectory(
-                data_dir.to_string_lossy().into_owned(),
-            ))
-            .flag(libtor::TorFlag::SocksPort(SOCKS_PORT))
-            .flag(libtor::TorFlag::ControlPort(CONTROL_PORT))
-            .flag(libtor::TorFlag::CookieAuthentication(
-                libtor::TorBool::False,
-            ))
-            .start_background();
+        let mut tor = libtor::Tor::new();
+        tor.flag(libtor::TorFlag::DataDirectory(
+            data_dir.to_string_lossy().into_owned(),
+        ))
+        .flag(libtor::TorFlag::SocksPort(SOCKS_PORT))
+        .flag(libtor::TorFlag::ControlPort(CONTROL_PORT))
+        .flag(libtor::TorFlag::CookieAuthentication(
+            libtor::TorBool::False,
+        ));
+        if quiet {
+            // libtor logs straight to stdout, bypassing tracing; silence it so
+            // the default output stays at just the dashboard URL.
+            tor.flag(libtor::TorFlag::Quiet());
+        }
+        let handle = tor.start_background();
 
         wait_for_port(SOCKS_PORT)?;
         tracing::info!("Embedded Tor ready");

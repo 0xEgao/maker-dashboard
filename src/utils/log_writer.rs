@@ -5,26 +5,25 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tracing_subscriber::fmt::MakeWriter;
 
-/// A writer that either writes to a per-maker log file + stdout, or just stdout.
+/// A writer that routes logs to per-maker files only — never stdout.
+/// Stdout logging is a separate fmt layer gated by `--log-filter`.
 pub enum LogWriter {
-    Tee(File, io::Stdout),
-    Stdout(io::Stdout),
+    /// Thread name was `maker-{id}`; the file handle is already open.
+    File(File),
+    /// Non-maker thread: inspect each line for `[<port>]` and append it to the
+    /// owning maker's log file if the port is registered. Otherwise the line
+    /// is discarded.
+    Detect,
 }
 
 impl Write for LogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
-            LogWriter::Tee(f, s) => {
+            LogWriter::File(f) => {
                 let stripped = strip_ansi(buf);
                 f.write_all(&stripped)?;
-                s.write_all(buf)?;
-                // Force flush so block-buffered stdout (non-TTY containers)
-                // surfaces each tracing event immediately instead of waiting
-                // for the 8 KB buffer to fill.
-                s.flush()?;
-                Ok(buf.len())
             }
-            LogWriter::Stdout(s) => {
+            LogWriter::Detect => {
                 let stripped = strip_ansi(buf);
                 let _ = (|| -> io::Result<()> {
                     let Some(maker_id) = maker_id_from_log_line(&stripped) else {
@@ -46,19 +45,15 @@ impl Write for LogWriter {
                     }
                     Ok(())
                 })();
-                s.write_all(buf)?;
-                Ok(buf.len())
             }
         }
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
-            LogWriter::Tee(f, s) => {
-                f.flush()?;
-                s.flush()
-            }
-            LogWriter::Stdout(s) => s.flush(),
+            LogWriter::File(f) => f.flush(),
+            LogWriter::Detect => Ok(()),
         }
     }
 }
@@ -66,7 +61,9 @@ impl Write for LogWriter {
 /// A `MakeWriter` implementation that routes logs to per-maker files
 /// based on the current thread name. Threads named `maker-{id}` get their own
 /// log file under the maker data directory as `debug.log`.
-/// All other threads write to stdout.
+/// Lines from other threads are matched against registered maker network
+/// ports (`[<port>]` in the line) and appended to that maker's file;
+/// unmatched lines are discarded.
 #[derive(Clone)]
 pub struct MakerLogWriter;
 
@@ -149,10 +146,10 @@ impl<'a> MakeWriter<'a> for MakerLogWriter {
     fn make_writer(&'a self) -> Self::Writer {
         match Self::extract_maker_id() {
             Some(id) => match self.open_log_file(&id) {
-                Ok(file) => LogWriter::Tee(file, io::stdout()),
-                Err(_) => LogWriter::Stdout(io::stdout()),
+                Ok(file) => LogWriter::File(file),
+                Err(_) => LogWriter::Detect,
             },
-            None => LogWriter::Stdout(io::stdout()),
+            None => LogWriter::Detect,
         }
     }
 }

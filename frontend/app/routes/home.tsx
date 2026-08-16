@@ -12,7 +12,6 @@ import {
   Zap,
 } from "lucide-react";
 import AddMaker from "./addMaker";
-import BitcoindWidget from "../components/BitcoindWidget";
 import { ChangePasswordModal } from "../components/Nav";
 import {
   makers,
@@ -43,6 +42,35 @@ interface MakerRow {
 
 const SWAP_HISTORY_REFRESH_MS = 60_000;
 type MakerFilter = "all" | "running" | "stopped";
+
+/** Network + Tor status tags shown at the top left of the dashboard. */
+function NetworkTags() {
+  const [torRunning, setTorRunning] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    monitoring
+      .getTorStatus()
+      .then((s) => setTorRunning(s.managed))
+      .catch(() => setTorRunning(false));
+  }, []);
+
+  return (
+    <div className="flex gap-2">
+      <span className="cs-network-badge cs-home-network green">
+        <span className="cs-dot" />
+        Signet
+      </span>
+      <span
+        className={`cs-network-badge cs-home-network ${
+          torRunning ? "green" : "muted"
+        }`}
+      >
+        <span className="cs-dot" />
+        Tor
+      </span>
+    </div>
+  );
+}
 
 function swapKey(
   utxo: Pick<UtxoInfo, "addr" | "amount" | "utxo_type">,
@@ -89,10 +117,7 @@ function FirstRunWelcome({ onStart }: { onStart: () => void }) {
       <main className="cs-home-page cs-first-run-page">
         <header className="cs-home-top">
           <div className="cs-home-brand">
-            <span className="cs-network-badge cs-home-network">
-              <span className="cs-dot" />
-              Signet
-            </span>
+            <NetworkTags />
             <div className="cs-home-title-row">
               <span className="cs-home-mark">O</span>
               <h1>OpenSwap Maker</h1>
@@ -138,8 +163,6 @@ export default function Home() {
   const [makerFilter, setMakerFilter] = useState<MakerFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [autoStartMakers, setAutoStartMakers] = useState(true);
-  const [autoStartSaving, setAutoStartSaving] = useState(false);
   const [copiedTor, setCopiedTor] = useState<string | null>(null);
   const [swapBannerDismissed, setSwapBannerDismissed] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -231,39 +254,11 @@ export default function Home() {
 
   useEffect(() => {
     loadMakers(true);
-    makers
-      .autoStartSettings()
-      .then((settings) => setAutoStartMakers(settings.enabled))
-      .catch((err) =>
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load maker startup setting",
-        ),
-      );
     const interval = setInterval(() => {
       void loadMakers();
     }, 15_000);
     return () => clearInterval(interval);
   }, []);
-
-  async function toggleAutoStartMakers(enabled: boolean) {
-    setAutoStartSaving(true);
-    setAutoStartMakers(enabled);
-    try {
-      const settings = await makers.updateAutoStartSettings(enabled);
-      setAutoStartMakers(settings.enabled);
-    } catch (err) {
-      setAutoStartMakers(!enabled);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to save maker startup setting",
-      );
-    } finally {
-      setAutoStartSaving(false);
-    }
-  }
 
   function copyTor(id: string, torAddress: string) {
     const text = torHostOnly(torAddress);
@@ -324,10 +319,7 @@ export default function Home() {
       <main className="cs-home-page">
         <header className="cs-home-top">
           <div className="cs-home-brand">
-            <span className="cs-network-badge cs-home-network">
-              <span className="cs-dot" />
-              Signet
-            </span>
+            <NetworkTags />
             <div className="cs-home-title-row">
               <span className="cs-home-mark">O</span>
               <h1>OpenSwap Maker</h1>
@@ -356,7 +348,6 @@ export default function Home() {
                 {reportsPartial ? " · partial" : ""}
               </span>
             </article>
-            <BitcoindWidget onStatusChange={() => void loadMakers(true)} />
           </div>
         </header>
 
@@ -426,18 +417,6 @@ export default function Home() {
               </div>
             </div>
             <div className="cs-actions">
-              <label className="cs-toggle">
-                <span>Auto-start makers</span>
-                <input
-                  type="checkbox"
-                  checked={autoStartMakers}
-                  disabled={autoStartSaving}
-                  onChange={(event) =>
-                    void toggleAutoStartMakers(event.target.checked)
-                  }
-                  aria-label="Auto-start makers on startup"
-                />
-              </label>
               <button
                 type="button"
                 onClick={() => setShowChangePassword(true)}

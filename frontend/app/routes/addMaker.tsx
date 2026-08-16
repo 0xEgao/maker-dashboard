@@ -1,57 +1,20 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  ArrowLeft,
-  Check,
-  Eye,
-  EyeOff,
-  LoaderCircle,
-  Play,
-  X,
-} from "lucide-react";
-import {
-  ApiError,
-  makers,
-  onboarding,
-  type CreateMakerRequest,
-  type MakerBackend,
-} from "../api";
+import { ArrowLeft, Eye, EyeOff, LoaderCircle, Play, X } from "lucide-react";
+import { ApiError, makers, type CreateMakerRequest } from "../api";
 
-type CheckId = "electrum" | "bitcoin" | "tor";
-
-type CheckState = {
-  status: "idle" | "loading" | "success" | "error";
-  message?: string;
+/** Default values set by openswap core (MakerServerConfig::default / MIN_FEE_RATE).
+ * Relative fees are shown as plain percentages (0.25 = 0.25%); the value sent
+ * to the API is the entered number divided by 100. */
+const CORE_DEFAULTS = {
+  fidelityAmount: "10000",
+  fidelityTimelock: "15000",
+  feeRate: "2",
+  baseFee: "500",
+  amountRelativeFeePct: "0.25",
+  timeRelativeFeePct: "0.01",
 };
-
-type CheckRowDef = {
-  id: CheckId;
-  title: string;
-  desc: string;
-};
-
-const ELECTRUM_CHECK: CheckRowDef = {
-  id: "electrum",
-  title: "Checking Electrum",
-  desc: "Reaching the Electrum server used for chain data.",
-};
-
-const BITCOIND_CHECK: CheckRowDef = {
-  id: "bitcoin",
-  title: "Checking Bitcoin Core",
-  desc: "Bitcoin Core is running and fully synced.",
-};
-
-const TOR_CHECK: CheckRowDef = {
-  id: "tor",
-  title: "Checking Tor",
-  desc: "Tor SOCKS and control ports, needed for maker networking.",
-};
-
-function checksForBackend(backend: MakerBackend): CheckRowDef[] {
-  return [backend === "electrum" ? ELECTRUM_CHECK : BITCOIND_CHECK, TOR_CHECK];
-}
 
 function Field({
   label,
@@ -83,87 +46,20 @@ function Field({
   );
 }
 
-function CheckRow({ row, state }: { row: CheckRowDef; state: CheckState }) {
-  const isLoading = state.status === "loading";
-  const isSuccess = state.status === "success";
-  const isError = state.status === "error";
-
-  return (
-    <div
-      className={`cs-add-check ${
-        isSuccess ? "success" : isError ? "error" : ""
-      }`}
-    >
-      <span className="cs-add-check-dot" aria-hidden="true">
-        {isLoading && <LoaderCircle size={14} className="cs-spin" />}
-        {isSuccess && <Check size={14} />}
-        {isError && <X size={14} />}
-      </span>
-      <div className="cs-add-check-body">
-        <strong>{row.title}</strong>
-        <p>{row.desc}</p>
-        {state.message && (
-          <span className={isError ? "cs-add-result error" : "cs-add-result"}>
-            {state.message}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [backend, setBackend] = useState<MakerBackend>("electrum");
-  const [bitcoinRpc, setBitcoinRpc] = useState("127.0.0.1:38332");
-  const [bitcoinUser, setBitcoinUser] = useState("user");
-  const [bitcoinPassword, setBitcoinPassword] = useState("password");
-  const [showRpcPassword, setShowRpcPassword] = useState(false);
-  const [zmq, setZmq] = useState("tcp://127.0.0.1:28332");
+  const [fidelityAmount, setFidelityAmount] = useState(CORE_DEFAULTS.fidelityAmount);
+  const [fidelityTimelock, setFidelityTimelock] = useState(CORE_DEFAULTS.fidelityTimelock);
+  const [feeRate, setFeeRate] = useState(CORE_DEFAULTS.feeRate);
+  const [baseFee, setBaseFee] = useState(CORE_DEFAULTS.baseFee);
+  const [amountRelativeFeePct, setAmountRelativeFeePct] = useState(CORE_DEFAULTS.amountRelativeFeePct);
+  const [timeRelativeFeePct, setTimeRelativeFeePct] = useState(CORE_DEFAULTS.timeRelativeFeePct);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [checks, setChecks] = useState<Partial<Record<CheckId, CheckState>>>(
-    {},
-  );
-
-  const activeChecks = checksForBackend(backend);
-  const checksStarted = Object.values(checks).some(
-    (c) => c && c.status !== "idle",
-  );
-
-  async function runCheck(check: CheckId): Promise<boolean> {
-    setChecks((prev) => ({ ...prev, [check]: { status: "loading" } }));
-
-    try {
-      const result = await onboarding.startupCheck({
-        check,
-        rpc: bitcoinRpc,
-        rpc_user: bitcoinUser,
-        rpc_password: bitcoinPassword,
-        zmq,
-      });
-      setChecks((prev) => ({
-        ...prev,
-        [check]: {
-          status: result.success ? "success" : "error",
-          message: result.message,
-        },
-      }));
-      return result.success;
-    } catch (err) {
-      setChecks((prev) => ({
-        ...prev,
-        [check]: {
-          status: "error",
-          message: err instanceof Error ? err.message : "Check failed",
-        },
-      }));
-      return false;
-    }
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -175,31 +71,62 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
       return;
     }
 
-    setError(null);
-    setStarting(true);
-    setChecks({});
-
-    // Live startup checks — chain backend reachability and Tor readiness.
-    const results = await Promise.all(
-      activeChecks.map((row) => runCheck(row.id)),
-    );
-    if (results.some((ok) => !ok)) {
-      setError("Startup checks failed. Fix the problem above and try again.");
-      setStarting(false);
+    if (password !== confirmPassword) {
+      setError("Wallet passwords do not match.");
       return;
     }
 
+    const parsed = {
+      fidelityAmount: Number(fidelityAmount),
+      fidelityTimelock: Number(fidelityTimelock),
+      feeRate: Number(feeRate),
+      baseFee: Number(baseFee),
+      amountRelativeFeePct: Number(amountRelativeFeePct),
+      timeRelativeFeePct: Number(timeRelativeFeePct),
+    };
+    if (!Number.isInteger(parsed.fidelityAmount) || parsed.fidelityAmount <= 0) {
+      setError("Fidelity amount must be a positive whole number of sats.");
+      return;
+    }
+    if (
+      !Number.isInteger(parsed.fidelityTimelock) ||
+      parsed.fidelityTimelock < 12960 ||
+      parsed.fidelityTimelock > 25920
+    ) {
+      setError("Fidelity timelock must be between 12960 and 25920 blocks.");
+      return;
+    }
+    if (!Number.isFinite(parsed.feeRate) || parsed.feeRate <= 0) {
+      setError("Fee rate must be a positive number (sat/vB).");
+      return;
+    }
+    if (!Number.isInteger(parsed.baseFee) || parsed.baseFee < 0) {
+      setError("Absolute fee must be a whole number of sats.");
+      return;
+    }
+    if (
+      !Number.isFinite(parsed.amountRelativeFeePct) ||
+      parsed.amountRelativeFeePct < 0 ||
+      !Number.isFinite(parsed.timeRelativeFeePct) ||
+      parsed.timeRelativeFeePct < 0
+    ) {
+      setError("Relative fees must be non-negative numbers.");
+      return;
+    }
+
+    setError(null);
+    setStarting(true);
+
     const body: CreateMakerRequest = {
       id,
-      backend,
       wallet_name: id,
       password: password || undefined,
-      ...(backend === "bitcoind" && {
-        rpc: bitcoinRpc,
-        rpc_user: bitcoinUser,
-        rpc_password: bitcoinPassword,
-        zmq,
-      }),
+      fidelity_amount: parsed.fidelityAmount,
+      fidelity_timelock: parsed.fidelityTimelock,
+      fidelity_feerate: parsed.feeRate,
+      base_fee: parsed.baseFee,
+      amount_relative_fee_pct: parsed.amountRelativeFeePct / 100,
+      time_relative_fee_pct: parsed.timeRelativeFeePct / 100,
     };
 
     try {
@@ -291,8 +218,7 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
 
               <Field
                 label="Wallet password"
-                optional
-                hint="Encrypts the maker's wallet on disk."
+                hint="Encrypts the wallet. Never stored; you will be asked for it on each start."
                 className="cs-span-2"
               >
                 <div className="cs-input-wrap">
@@ -302,7 +228,7 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
                     name="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Optional"
+                    placeholder="Leave blank for an unencrypted wallet"
                     disabled={starting}
                   />
                   <button
@@ -315,151 +241,176 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
                   </button>
                 </div>
               </Field>
+
+              <Field
+                label="Confirm wallet password"
+                hint="Must match the wallet password above."
+                className="cs-span-2"
+              >
+                <div className="cs-input-wrap">
+                  <input
+                    className="cs-input"
+                    type={showPassword ? "text" : "password"}
+                    name="confirmPassword"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Repeat password"
+                    disabled={starting}
+                  />
+                  <button
+                    type="button"
+                    className="cs-eye"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label="Toggle confirm password visibility"
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </Field>
+              {confirmPassword !== "" && password !== confirmPassword && (
+                <p className="cs-span-2" role="alert">
+                  Wallet passwords do not match.
+                </p>
+              )}
             </div>
           </section>
 
           <section className="cs-card">
             <div className="cs-card-head">
               <div>
-                <h2>Chain backend</h2>
-                <p>Where this maker gets its Bitcoin chain data from.</p>
+                <h2>Fidelity bond</h2>
+                <p>
+                  Locks up funds to prove this maker's commitment to the
+                  network. Defaults match openswap core.
+                </p>
               </div>
             </div>
             <div className="cs-card-body cs-field-grid">
-              <div className="cs-field cs-span-2">
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={starting}
-                    onClick={() => setBackend("electrum")}
-                    className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                      backend === "electrum"
-                        ? "bg-orange-600 text-white"
-                        : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-                    }`}
-                  >
-                    Electrum
-                  </button>
-                  <button
-                    type="button"
-                    disabled={starting}
-                    onClick={() => setBackend("bitcoind")}
-                    className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                      backend === "bitcoind"
-                        ? "bg-orange-600 text-white"
-                        : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-                    }`}
-                  >
-                    Bitcoin Core
-                  </button>
-                </div>
-                <p className="cs-hint">
-                  {backend === "electrum"
-                    ? "Uses a hosted Electrum server — no local node needed."
-                    : "Uses your own Bitcoin Core node via RPC + ZMQ."}
-                </p>
-              </div>
+              <Field
+                label="Bond amount"
+                required
+                hint="Satoshis locked in the fidelity bond."
+              >
+                <input
+                  className="cs-input"
+                  name="fidelityAmount"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={fidelityAmount}
+                  onChange={(e) => setFidelityAmount(e.target.value)}
+                  disabled={starting}
+                  required
+                />
+              </Field>
 
-              {backend === "bitcoind" && (
-                <>
-                  <Field
-                    label="Bitcoin RPC endpoint"
-                    required
-                    hint="Format: host:port"
-                    className="cs-span-2"
-                  >
-                    <input
-                      className="cs-input"
-                      name="bitcoinRpc"
-                      value={bitcoinRpc}
-                      onChange={(e) => setBitcoinRpc(e.target.value)}
-                      placeholder="127.0.0.1:38332"
-                      disabled={starting}
-                      required
-                    />
-                  </Field>
+              <Field
+                label="Timelock"
+                required
+                hint="Blocks until the bond can be reclaimed (12960–25920)."
+              >
+                <input
+                  className="cs-input"
+                  name="fidelityTimelock"
+                  type="number"
+                  min={12960}
+                  max={25920}
+                  step={1}
+                  value={fidelityTimelock}
+                  onChange={(e) => setFidelityTimelock(e.target.value)}
+                  disabled={starting}
+                  required
+                />
+              </Field>
 
-                  <Field label="RPC username" required>
-                    <input
-                      className="cs-input"
-                      name="bitcoinUser"
-                      value={bitcoinUser}
-                      onChange={(e) => setBitcoinUser(e.target.value)}
-                      placeholder="user"
-                      disabled={starting}
-                      required
-                    />
-                  </Field>
-
-                  <Field label="RPC password" required>
-                    <div className="cs-input-wrap">
-                      <input
-                        className="cs-input"
-                        type={showRpcPassword ? "text" : "password"}
-                        name="bitcoinPassword"
-                        value={bitcoinPassword}
-                        onChange={(e) => setBitcoinPassword(e.target.value)}
-                        placeholder="password"
-                        disabled={starting}
-                        required
-                      />
-                      <button
-                        type="button"
-                        className="cs-eye"
-                        onClick={() => setShowRpcPassword((v) => !v)}
-                        aria-label="Toggle RPC password visibility"
-                      >
-                        {showRpcPassword ? (
-                          <EyeOff size={16} />
-                        ) : (
-                          <Eye size={16} />
-                        )}
-                      </button>
-                    </div>
-                  </Field>
-
-                  <Field
-                    label="ZMQ endpoint"
-                    required
-                    hint="Subscribe to rawblock + rawtx notifications."
-                    className="cs-span-2"
-                  >
-                    <input
-                      className="cs-input"
-                      name="zmq"
-                      value={zmq}
-                      onChange={(e) => setZmq(e.target.value)}
-                      placeholder="tcp://127.0.0.1:28332"
-                      disabled={starting}
-                      required
-                    />
-                  </Field>
-                </>
-              )}
+              <Field
+                label="Fidelity fee rate (sat/vB)"
+                required
+                hint="sat/vB for the bond transaction. Saved with the maker config."
+                className="cs-span-2"
+              >
+                <input
+                  className="cs-input"
+                  name="feeRate"
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={feeRate}
+                  onChange={(e) => setFeeRate(e.target.value)}
+                  disabled={starting}
+                  required
+                />
+              </Field>
             </div>
           </section>
 
-          {checksStarted && (
-            <section className="cs-card cs-add-prechecks">
-              <div className="cs-card-head">
-                <div>
-                  <h2>Startup checks</h2>
-                  <p>Verifying connectivity before the maker starts.</p>
-                </div>
+          <section className="cs-card">
+            <div className="cs-card-head">
+              <div>
+                <h2>Maker fees</h2>
+                <p>
+                  What this maker charges takers per swap. Defaults match
+                  openswap core.
+                </p>
               </div>
-              <div className="cs-card-body">
-                <div className="cs-add-checks">
-                  {activeChecks.map((row) => (
-                    <CheckRow
-                      key={row.id}
-                      row={row}
-                      state={checks[row.id] ?? { status: "idle" }}
-                    />
-                  ))}
-                </div>
-              </div>
-            </section>
-          )}
+            </div>
+            <div className="cs-card-body cs-field-grid">
+              <Field
+                label="Absolute fee"
+                required
+                hint="Fixed fee per swap, in satoshis."
+              >
+                <input
+                  className="cs-input"
+                  name="baseFee"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={baseFee}
+                  onChange={(e) => setBaseFee(e.target.value)}
+                  disabled={starting}
+                  required
+                />
+              </Field>
+
+              <Field
+                label="Amount-relative fee (%)"
+                required
+                hint="Percentage of the swap amount (e.g. 0.25 = 0.25%)."
+              >
+                <input
+                  className="cs-input"
+                  name="amountRelativeFeePct"
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={amountRelativeFeePct}
+                  onChange={(e) => setAmountRelativeFeePct(e.target.value)}
+                  disabled={starting}
+                  required
+                />
+              </Field>
+
+              <Field
+                label="Time-relative fee (%)"
+                required
+                hint="Percentage per unit of timelock duration (e.g. 0.01 = 0.01%)."
+                className="cs-span-2"
+              >
+                <input
+                  className="cs-input"
+                  name="timeRelativeFeePct"
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={timeRelativeFeePct}
+                  onChange={(e) => setTimeRelativeFeePct(e.target.value)}
+                  disabled={starting}
+                  required
+                />
+              </Field>
+            </div>
+          </section>
 
           <div className="cs-add-actions">
             <Link to="/" className="cs-btn ghost">
