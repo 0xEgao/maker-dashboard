@@ -130,7 +130,9 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
   );
 
   const activeChecks = checksForBackend(backend);
-  const checksStarted = Object.values(checks).some((c) => c && c.status !== "idle");
+  const checksStarted = Object.values(checks).some(
+    (c) => c && c.status !== "idle",
+  );
 
   async function runCheck(check: CheckId): Promise<boolean> {
     setChecks((prev) => ({ ...prev, [check]: { status: "loading" } }));
@@ -463,7 +465,11 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
             <Link to="/" className="cs-btn ghost">
               Cancel
             </Link>
-            <button type="submit" className="cs-btn primary" disabled={starting}>
+            <button
+              type="submit"
+              className="cs-btn primary"
+              disabled={starting}
+            >
               {starting ? (
                 <LoaderCircle size={18} className="cs-spin" />
               ) : (

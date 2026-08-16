@@ -302,6 +302,7 @@ impl ApiClient {
             "/makers",
             &serde_json::json!({
                 "id": req.id,
+                "backend": "bitcoind",
                 "rpc": req.rpc_url,
                 "zmq": req.zmq_url,
                 "rpc_user": self.creds.user,
