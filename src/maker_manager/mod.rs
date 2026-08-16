@@ -741,7 +741,14 @@ impl MakerManager {
     /// so starting the same `MakerServer` instance again would leave it in
     /// recovery-only mode. Re-create the instance from the persisted config to
     /// give the restarted server fresh background services.
-    pub fn restart_maker(&mut self, id: &MakerId) -> Result<(), MakerManagerError> {
+    ///
+    /// The re-created maker re-opens its wallet, so `password` is required for
+    /// encrypted wallets. Zeroized after wallet load, never stored.
+    pub fn restart_maker(
+        &mut self,
+        id: &MakerId,
+        password: Option<Zeroizing<String>>,
+    ) -> Result<(), MakerManagerError> {
         let config = self
             .configs
             .get(id)
@@ -753,7 +760,7 @@ impl MakerManager {
                 .map_err(MakerManagerError::Other)?;
         }
         self.pool.remove_maker(id);
-        self.create_maker_internal(id.clone(), config, false)
+        self.create_maker_internal(id.clone(), config, password)
             .map_err(MakerManagerError::Other)?;
         self.pool.start_server(id).map_err(MakerManagerError::Other)
     }

@@ -342,7 +342,8 @@ export const makers = {
   start: (id: string, password?: string): Promise<string> =>
     post(`/makers/${id}/start`, password ? { password } : undefined),
   stop: (id: string): Promise<string> => post(`/makers/${id}/stop`),
-  restart: (id: string): Promise<string> => post(`/makers/${id}/restart`),
+  restart: (id: string, password?: string): Promise<string> =>
+    post(`/makers/${id}/restart`, password ? { password } : undefined),
 };
 
 // ─── Backend ──────────────────────────────────────────────────────────────────

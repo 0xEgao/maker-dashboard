@@ -450,10 +450,14 @@ async fn stop_maker(
     }
 }
 
-/// Restart a maker (stop + start)
+/// Restart a maker (stop + re-create + start)
+///
+/// Accepts an optional JSON body with the wallet password — required for
+/// encrypted wallets, since restart re-opens the wallet. Zeroized after use.
 #[utoipa::path(
     post, path = "/api/makers/{id}/restart", tag = "makers",
     params(("id" = String, Path, description = "Maker ID")),
+    request_body = StartMakerRequest,
     responses(
         (status = 200, description = "Maker restarted",  body = ApiResponse<String>),
         (status = 404, description = "Maker not found",  body = ApiResponse<String>),
@@ -463,9 +467,11 @@ async fn stop_maker(
 async fn restart_maker(
     State(state): State<Arc<Mutex<MakerManager>>>,
     Path(id): Path<String>,
+    body: Option<Json<StartMakerRequest>>,
 ) -> (StatusCode, Json<ApiResponse<String>>) {
+    let password = body.and_then(|Json(b)| b.password).map(Zeroizing::new);
     let mut mgr = state.lock().await;
-    match mgr.restart_maker(&id) {
+    match mgr.restart_maker(&id, password) {
         Ok(()) => (
             StatusCode::OK,
             Json(ApiResponse::ok(format!("Maker '{id}' restarted"))),
