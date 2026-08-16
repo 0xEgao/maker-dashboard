@@ -62,7 +62,7 @@ fn run_check(body: StartupCheckRequest) -> StartupCheckResponse {
 }
 
 fn check_bitcoin(body: &StartupCheckRequest) -> StartupCheckResponse {
-    use coinswap::bitcoind::bitcoincore_rpc::RpcApi;
+    use openswap::bitcoind::bitcoincore_rpc::RpcApi;
 
     let check = StartupCheckKind::Bitcoin;
     let rpc = body.rpc.as_deref().unwrap_or(DEFAULT_RPC_ADDR);
@@ -109,7 +109,7 @@ fn check_bitcoin(body: &StartupCheckRequest) -> StartupCheckResponse {
 }
 
 fn check_rpc(body: &StartupCheckRequest) -> StartupCheckResponse {
-    use coinswap::bitcoind::bitcoincore_rpc::RpcApi;
+    use openswap::bitcoind::bitcoincore_rpc::RpcApi;
 
     let check = StartupCheckKind::Rpc;
     let rpc = body.rpc.as_deref().unwrap_or(DEFAULT_RPC_ADDR);
@@ -255,8 +255,8 @@ fn check_tor(body: &StartupCheckRequest) -> StartupCheckResponse {
 
 fn build_rpc_client(
     body: &StartupCheckRequest,
-) -> Result<coinswap::bitcoind::bitcoincore_rpc::Client, String> {
-    use coinswap::bitcoind::bitcoincore_rpc::{Auth, Client};
+) -> Result<openswap::bitcoind::bitcoincore_rpc::Client, String> {
+    use openswap::bitcoind::bitcoincore_rpc::{Auth, Client};
 
     let rpc = body.rpc.as_deref().unwrap_or(DEFAULT_RPC_ADDR);
     let user = body.rpc_user.as_deref().unwrap_or(DEFAULT_RPC_USER);

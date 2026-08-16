@@ -1,0 +1,36 @@
+# openswap_maker service
+# /etc/systemd/system/openswap_maker.service
+
+[Unit]
+Description=openswap_maker
+Wants=www.service docker_images.service
+After=www.service docker_images.service
+
+[Service]
+WorkingDirectory=/opt/mynode/openswap_maker
+
+ExecStartPre=/usr/bin/is_not_shutting_down.sh
+ExecStartPre=/bin/bash -c 'if [ -f /usr/bin/service_scripts/pre_openswap_maker.sh ]; then /bin/bash /usr/bin/service_scripts/pre_openswap_maker.sh; fi'
+ExecStart=docker run --rm \
+  --name openswap_maker \
+  --network host \
+  --volume /mnt/hdd/mynode/openswap_maker/config:/root/.config/maker-dashboard \
+  --volume /mnt/hdd/mynode/openswap_maker/openswap:/root/.openswap \
+  --env MAKER_DASHBOARD_HOST=127.0.0.1 \
+  --env MAKER_DASHBOARD_PORT=14200 \
+  --env MAKER_DASHBOARD_LOG_FILTER=tower_http=debug,info \
+  --env MAKER_DASHBOARD_NO_COLOR=true \
+  openswap/maker-dashboard:master
+ExecStartPost=/bin/bash -c 'if [ -f /usr/bin/service_scripts/post_openswap_maker.sh ]; then /bin/bash /usr/bin/service_scripts/post_openswap_maker.sh; fi'
+ExecStop=docker stop -t 60 openswap_maker
+
+User=bitcoin
+Group=bitcoin
+Type=simple
+TimeoutSec=120
+Restart=always
+RestartSec=60
+SyslogIdentifier=openswap_maker
+
+[Install]
+WantedBy=multi-user.target

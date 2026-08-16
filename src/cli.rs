@@ -3,12 +3,12 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-/// Maker Dashboard, HTTP API server for managing coinswap makers
+/// Maker Dashboard, HTTP API server for managing openswap makers
 #[derive(Parser, Debug)]
 #[command(
     name = "maker-dashboard",
     version,
-    about = "HTTP dashboard for managing coinswap maker nodes",
+    about = "HTTP dashboard for managing openswap maker nodes",
     long_about = None,
 )]
 pub struct Cli {

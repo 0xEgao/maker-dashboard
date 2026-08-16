@@ -11,18 +11,18 @@ use std::sync::Arc;
 use crate::tor_manager::TorManager;
 use crate::utils::log_writer::MakerLogWriter;
 use anyhow::{anyhow, Result};
-use coinswap::bitcoin::Network;
-use coinswap::bitcoind::bitcoincore_rpc::Auth;
-use coinswap::maker::{MakerServer, MakerServerConfig};
-use coinswap::wallet::RPCConfig;
 use maker_pool::{MakerId, MakerPool};
 use message::{MessageRequest, MessageResponse};
+use openswap::bitcoin::Network;
+use openswap::bitcoind::bitcoincore_rpc::Auth;
+use openswap::maker::{MakerServer, MakerServerConfig};
+use openswap::wallet::{BackendConfig, CoreRpcConfig};
 use persistence::{DashboardSettings, PersistenceManager};
 
 /// Configuration for creating a new maker.
 #[derive(Debug, Clone)]
 pub struct MakerConfig {
-    /// Optional data directory. Default: `~/.coinswap/<id>`
+    /// Optional data directory. Default: `~/.openswap/<id>`
     pub data_directory: Option<PathBuf>,
     /// Bitcoin Core RPC network address (e.g. "127.0.0.1:38332")
     pub rpc: String,
@@ -292,11 +292,11 @@ impl MakerManager {
         self.persistence.save_settings(&self.settings)
     }
 
-    /// Returns the default coinswap data directory for a maker.
-    /// Defaults to `~/.coinswap/{id}`.
+    /// Returns the default openswap data directory for a maker.
+    /// Defaults to `~/.openswap/{id}`.
     fn default_maker_data_dir(id: &MakerId) -> PathBuf {
         let home = dirs::home_dir().expect("Failed to determine home directory");
-        home.join(".coinswap").join(id)
+        home.join(".openswap").join(id)
     }
 
     fn normalize_wallet_name(id: &MakerId, wallet_name: Option<String>) -> Option<String> {
@@ -365,7 +365,7 @@ impl MakerManager {
     }
 
     /// Internal: initialise the maker and register it in the pool.
-    /// Does NOT start the coinswap server.
+    /// Does NOT start the openswap server.
     fn create_maker_internal(
         &mut self,
         id: MakerId,
@@ -383,11 +383,12 @@ impl MakerManager {
             config.data_directory = Some(maker_dir);
         }
 
-        let rpc_config = RPCConfig {
+        let backend = BackendConfig::CoreRpc(CoreRpcConfig {
             url: config.rpc.clone(),
             auth: Auth::UserPass(user, pass),
             wallet_name: config.wallet_name.clone().unwrap_or_else(|| id.clone()),
-        };
+            zmq_addr: config.zmq.clone(),
+        });
 
         let data_dir = config
             .data_directory
@@ -406,12 +407,11 @@ impl MakerManager {
             min_swap_amount: config.min_swap_amount,
             required_confirms: config.required_confirms,
             supported_protocols: MakerServerConfig::default().supported_protocols,
-            zmq_addr: config.zmq.clone(),
             fidelity_amount: config.fidelity_amount,
             fidelity_timelock: config.fidelity_timelock,
             network,
             wallet_name,
-            rpc_config,
+            backend,
             control_port: config.control_port,
             socks_port: config.socks_port,
             tor_auth_password: config.tor_auth.clone().unwrap_or_default(),
@@ -444,7 +444,7 @@ impl MakerManager {
     }
 
     /// Creates and registers a new maker (init + message loop only, NOT started).
-    /// Use `start_maker` to start the coinswap server.
+    /// Use `start_maker` to start the openswap server.
     pub fn create_maker(&mut self, id: MakerId, config: MakerConfig) -> Result<()> {
         let config = Self::normalize_config(&id, config);
         self.create_maker_internal(id, config, true)
@@ -531,7 +531,7 @@ impl MakerManager {
         Ok((network_port, rpc_port))
     }
 
-    /// Starts the coinswap server for a registered maker.
+    /// Starts the openswap server for a registered maker.
     /// The maker must already be created (via `create_maker`).
     pub fn start_maker(&mut self, id: &MakerId) -> Result<(), MakerManagerError> {
         if !self.configs.contains_key(id) {
@@ -550,7 +550,7 @@ impl MakerManager {
         self.pool.start_server(id).map_err(MakerManagerError::Other)
     }
 
-    /// Stops the coinswap server for a running maker.
+    /// Stops the openswap server for a running maker.
     /// The maker remains registered — wallet queries still work.
     pub fn stop_maker(&mut self, id: &MakerId) -> Result<(), MakerManagerError> {
         if !self.configs.contains_key(id) {

@@ -556,7 +556,7 @@ async fn get_rpc_status(
     drop(manager);
 
     let result = tokio::task::spawn_blocking(move || {
-        use coinswap::bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+        use openswap::bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 
         let auth = match config.auth {
             Some((user, pass)) => Auth::UserPass(user, pass),
@@ -800,7 +800,7 @@ mod tests {
 
     #[test]
     fn wallet_swap_report_path_uses_wallet_file_stem() {
-        let data_dir = PathBuf::from("/tmp/coinswap/maker1");
+        let data_dir = PathBuf::from("/tmp/openswap/maker1");
         assert_eq!(
             wallet_swap_report_path(&data_dir, "maker1.dat"),
             data_dir.join("wallets").join("maker1_swap_report.json")

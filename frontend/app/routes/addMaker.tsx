@@ -425,7 +425,7 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
                 hint={
                   <>
                     Where maker data is stored. Defaults to{" "}
-                    <code>~/.coinswap/&lt;id&gt;</code>
+                    <code>~/.openswap/&lt;id&gt;</code>
                   </>
                 }
                 className="cs-span-2"
@@ -435,7 +435,7 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
                   name="dataDir"
                   value={formData.dataDir}
                   onChange={handleChange}
-                  placeholder="e.g. ~/.coinswap/maker-1 (leave blank for default)"
+                  placeholder="e.g. ~/.openswap/maker-1 (leave blank for default)"
                 />
               </Field>
 

@@ -24,7 +24,7 @@ pub fn routes() -> Router<AppState> {
 /// Try to connect to a bitcoind RPC endpoint using a maker config.
 /// Returns the chain name (e.g. "regtest") on success.
 fn probe_rpc(config: &MakerConfig) -> Option<String> {
-    use coinswap::bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+    use openswap::bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
 
     let auth = match &config.auth {
         Some((u, p)) => Auth::UserPass(u.clone(), p.clone()),
@@ -40,7 +40,7 @@ fn probe_rpc(config: &MakerConfig) -> Option<String> {
 /// Mainnet (8332) is excluded — the UI only surfaces regtest/signet.
 /// Returns the chain name on the first successful connection, or None if all fail.
 fn probe_standard_ports() -> Option<String> {
-    use coinswap::bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+    use openswap::bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
     use std::net::TcpStream;
     use std::time::Duration;
 

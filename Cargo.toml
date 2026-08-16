@@ -2,11 +2,11 @@
 name = "maker-dashboard"
 version = "0.2.2"
 edition = "2021"
-authors = ["Citadel-tech Team"]
+authors = ["Citadel FOSS Team"]
 
 [features]
 # Enable with: cargo test --features integration-test
-integration-test = ["coinswap/integration-test"]
+integration-test = ["openswap/integration-test"]
 # Compile the built frontend (frontend/build/client) into the binary so the
 # release artifact is self-contained. Requires the frontend to be built first.
 # Used by the release workflow; default builds keep serving from disk.
@@ -18,7 +18,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-coinswap = { git = "https://github.com/citadel-tech/coinswap", rev = "12bfb5c" }
+openswap = { git = "https://github.com/citadel-foss/openswap", rev = "776debce" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_cbor = "0.11.2"
@@ -41,10 +41,10 @@ rust-embed = { version = "8", features = ["mime-guess"], optional = true }
 # Debian packaging metadata (cargo-deb). The frontend is embedded in the binary
 # via the `embed-frontend` feature, so the package only ships the binary.
 [package.metadata.deb]
-maintainer = "Citadel-tech Team"
-copyright = "2026, Citadel-tech Team"
+maintainer = "Citadel FOSS Team"
+copyright = "2026, Citadel FOSS Team"
 license-file = ["LICENSE", "0"]
-extended-description = "Dashboard for managing Coinswap maker nodes (liquidity providers in the Coinswap privacy protocol)."
+extended-description = "Dashboard for managing OpenSwap maker nodes (liquidity providers in the OpenSwap privacy protocol)."
 section = "utils"
 priority = "optional"
 assets = [

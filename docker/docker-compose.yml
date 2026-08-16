@@ -58,7 +58,7 @@ services:
 
   web:
     build: ..
-    image: coinswap/maker-dashboard:latest
+    image: openswap/maker-dashboard:latest
     container_name: maker-dashboard-web
     network_mode: "service:tor"
     depends_on:
@@ -68,7 +68,7 @@ services:
         condition: service_healthy
     volumes:
       - dashboard-config:/home/appuser/.config/maker-dashboard
-      - coinswap-data:/home/appuser/.coinswap
+      - openswap-data:/home/appuser/.openswap
     environment:
       - MAKER_DASHBOARD_HOST=0.0.0.0
       - MAKER_DASHBOARD_PORT=${MAKER_DASHBOARD_PORT:-3000}
@@ -83,5 +83,5 @@ volumes:
     driver: local
   dashboard-config:
     driver: local
-  coinswap-data:
+  openswap-data:
     driver: local

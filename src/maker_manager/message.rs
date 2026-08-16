@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use coinswap::{bitcoin::Txid, utill::UTXO, wallet::Balances};
+use openswap::{bitcoin::Txid, utill::UTXO, wallet::Balances};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string_pretty};
 

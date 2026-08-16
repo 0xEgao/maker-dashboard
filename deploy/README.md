@@ -4,7 +4,7 @@
 > experimental and has not been hardened for production. It manages hot wallets
 > holding real Bitcoin, and misconfiguration can lead to permanent loss of
 > funds. Do not run it with funds you cannot afford to lose, and keep your own
-> backups of wallet seeds and `/var/lib/maker-dashboard-coinswap`.
+> backups of wallet seeds and `/var/lib/maker-dashboard-openswap`.
 
 Run Maker Dashboard on a Linux VPS. CI signs each image; the VPS verifies the
 signature before restarting.
@@ -57,14 +57,14 @@ sudo mkdir -p /var/lib/maker-dashboard
 sudo chown 1000:1000 /var/lib/maker-dashboard
 
 # maker wallets, fidelity bonds, swap history, per-maker Tor keys
-sudo mkdir -p /var/lib/maker-dashboard-coinswap
-sudo chown 1000:1000 /var/lib/maker-dashboard-coinswap
+sudo mkdir -p /var/lib/maker-dashboard-openswap
+sudo chown 1000:1000 /var/lib/maker-dashboard-openswap
 ```
 
 > Both must be persistent host mounts. The service runs the container with
-> `--rm`, so anything written inside the container (the maker `~/.coinswap`
+> `--rm`, so anything written inside the container (the maker `~/.openswap`
 > tree in particular) is destroyed on every restart/update. Mounting
-> `/var/lib/maker-dashboard-coinswap` to `~/.coinswap` is what keeps wallet
+> `/var/lib/maker-dashboard-openswap` to `~/.openswap` is what keeps wallet
 > funds and fidelity bonds alive across deploys. **Back this directory up.**
 
 Pull and verify the first image:
@@ -141,7 +141,7 @@ Every build also publishes an immutable `:sha-<short>` tag. Pin to it by
 overriding `IMAGE`:
 
 ```sh
-sudo IMAGE=docker.io/coinswap/maker-dashboard:sha-abc123def456 \
+sudo IMAGE=docker.io/openswap/maker-dashboard:sha-abc123def456 \
      maker-dashboard-update.sh
 ```
 
@@ -285,10 +285,10 @@ unsigned image manually. Investigate before deploying.
 
 **Container exits on start:** check `journalctl -u maker-dashboard.service
 -n 50`. Usually: port 3000 already bound, or `/var/lib/maker-dashboard` /
-`/var/lib/maker-dashboard-coinswap` not owned by `1000:1000`.
+`/var/lib/maker-dashboard-openswap` not owned by `1000:1000`.
 
 **Makers lost wallets / "unable to decrypt" after an update:** the
-`/var/lib/maker-dashboard-coinswap` -> `~/.coinswap` mount is missing, so the
+`/var/lib/maker-dashboard-openswap` -> `~/.openswap` mount is missing, so the
 maker wallet tree was living in the container's `--rm` layer and got wiped on
 restart. Add the mount (see the unit file), recreate the dir owned by
 `1000:1000`, and restore wallets from your seed backup. Wallet data destroyed

@@ -61,7 +61,7 @@ function downloadReport(report: SwapReportDto) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `coinswap-maker-report-${report.swap_id}.json`;
+  a.download = `openswap-maker-report-${report.swap_id}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }

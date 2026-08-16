@@ -1,19 +1,19 @@
 {
-    "name": "Coinswap Maker Dashboard",
-    "short_name": "coinswap_maker",
+    "name": "OpenSwap Maker Dashboard",
+    "short_name": "openswap_maker",
     "author": {
-        "name": "Citadel Tech",
-        "link": "https://github.com/citadel-tech"
+        "name": "Citadel FOSS",
+        "link": "https://github.com/citadel-foss"
     },
     "website": {
         "name": "GitHub",
-        "link": "https://github.com/citadel-tech/maker-dashboard"
+        "link": "https://github.com/citadel-foss/maker-dashboard"
     },
     "category": "bitcoin_app",
-    "short_description": "Coinswap Maker Node",
+    "short_description": "OpenSwap Maker Node",
     "description": [
-        "Coinswap Maker Dashboard is a web-based management interface for running a Coinswap maker node.",
-        "Makers are liquidity providers in the Coinswap privacy protocol — they route Bitcoin through their wallets to break transaction history, earning fees in the process.",
+        "OpenSwap Maker Dashboard is a web-based management interface for running a OpenSwap maker node.",
+        "Makers are liquidity providers in the OpenSwap privacy protocol — they route Bitcoin through their wallets to break transaction history, earning fees in the process.",
         "The dashboard replaces the command-line maker-cli with an intuitive browser-based UI.",
         "You can create and manage multiple maker instances, configure maker settings, manage hot wallets, create fidelity bonds (time-locked Bitcoin deposits that prove commitment), and monitor maker activity — all from your browser."
     ],
@@ -40,10 +40,10 @@
     "show_on_homepage": true,
     "show_on_status_page": true,
     "hide_status_icon": false,
-    "app_tile_name": "Coinswap Maker",
+    "app_tile_name": "OpenSwap Maker",
     "app_tile_running_status_text": "Running",
     "app_tile_button_text": "Open",
-    "app_tile_button_href": "/app/coinswap_maker/info",
+    "app_tile_button_href": "/app/openswap_maker/info",
     "app_page_show_open_button": true,
     "app_page_content": [
         {

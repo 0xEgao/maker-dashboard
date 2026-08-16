@@ -12,14 +12,14 @@ For other installation options see [packaging/README.md](../README.md).
 From your local machine, copy the packaging files to the device:
 
 ```sh
-scp -r packaging/umbrel/ umbrel@umbrel.local:~/umbrel/app-stores/coinswap/coinswap-maker/
+scp -r packaging/umbrel/ umbrel@umbrel.local:~/umbrel/app-stores/openswap/openswap-maker/
 ```
 
 Then SSH in and install:
 
 ```sh
 ssh umbrel@umbrel.local
-umbreld client apps.install.mutate --appId coinswap-maker
+umbreld client apps.install.mutate --appId openswap-maker
 ```
 
 Open `http://umbrel.local:3010`.
@@ -27,25 +27,25 @@ Open `http://umbrel.local:3010`.
 ## Update
 
 ```sh
-scp -r packaging/umbrel/ umbrel@umbrel.local:~/umbrel/app-stores/coinswap/coinswap-maker/
+scp -r packaging/umbrel/ umbrel@umbrel.local:~/umbrel/app-stores/openswap/openswap-maker/
 ssh umbrel@umbrel.local
-umbreld client apps.uninstall.mutate --appId coinswap-maker
-umbreld client apps.install.mutate --appId coinswap-maker
+umbreld client apps.uninstall.mutate --appId openswap-maker
+umbreld client apps.install.mutate --appId openswap-maker
 ```
 
 ## Uninstall
 
 ```sh
-umbreld client apps.uninstall.mutate --appId coinswap-maker
+umbreld client apps.uninstall.mutate --appId openswap-maker
 ```
 
 ## Debug
 
 ```sh
-docker logs coinswap-maker_web_1
-docker logs coinswap-maker_tor_1
-docker logs coinswap-maker_app_proxy_1
-umbreld client apps.state.query --appId coinswap-maker
+docker logs openswap-maker_web_1
+docker logs openswap-maker_tor_1
+docker logs openswap-maker_app_proxy_1
+umbreld client apps.state.query --appId openswap-maker
 ```
 
 ## Tor

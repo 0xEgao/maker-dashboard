@@ -351,11 +351,11 @@ export default function Settings({ id, onSaved }: Props) {
                 type="text"
                 value={dataDir}
                 onChange={(e) => setDataDir(e.target.value)}
-                placeholder="~/.coinswap/maker"
+                placeholder="~/.openswap/maker"
                 className="cs-input"
               />
               <p className="cs-hint">
-                Defaults to <code>~/.coinswap/&lt;id&gt;</code>
+                Defaults to <code>~/.openswap/&lt;id&gt;</code>
               </p>
             </div>
           </div>
@@ -849,7 +849,7 @@ export default function Settings({ id, onSaved }: Props) {
                     text: (
                       <>
                         <strong className="text-white">Does not</strong> affect
-                        any on-chain state, fidelity bonds, or coinswap history
+                        any on-chain state, fidelity bonds, or openswap history
                       </>
                     ),
                   },

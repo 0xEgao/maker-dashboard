@@ -1,2 +1,2 @@
-export APP_COINSWAP_MAKER_IP="coinswap-maker_web_1"
-export APP_COINSWAP_MAKER_PORT="3000"
+export APP_OPENSWAP_MAKER_IP="openswap-maker_web_1"
+export APP_OPENSWAP_MAKER_PORT="3000"

@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="assets/coinswap-icon.colored.png" alt="Coinswap Maker Dashboard Logo" width="300" />
+<img src="assets/openswap-icon.colored.png" alt="OpenSwap Maker Dashboard Logo" width="300" />
 
-<h1 align="center">Coinswap Maker Dashboard</h1>
+<h1 align="center">OpenSwap Maker Dashboard</h1>
 
 </div>
 
-A web dashboard for managing [Coinswap](https://github.com/citadel-tech/coinswap) maker nodes.
+A web dashboard for managing [OpenSwap](https://github.com/citadel-foss/openswap) maker nodes.
 
 > **Before deploying:** read [SECURITY.md](SECURITY.md). The dashboard manages hot wallets holding real Bitcoin. Make sure you understand the access-control model, wallet storage, and fidelity bond requirements before exposing it to real funds.
 
@@ -23,11 +23,11 @@ The dashboard keeps maker registrations on disk, lets you start and stop makers 
 
 ## What Is a Maker?
 
-In Coinswap, a **maker** is a liquidity provider. Makers listen for swap requests from takers, route Bitcoin through their wallets to improve privacy, and earn fees in return. To participate, a maker needs to stay online and maintain a **fidelity bond**, which is a time-locked Bitcoin deposit used to signal long-term commitment and resist Sybil attacks.
+In OpenSwap, a **maker** is a liquidity provider. Makers listen for swap requests from takers, route Bitcoin through their wallets to improve privacy, and earn fees in return. To participate, a maker needs to stay online and maintain a **fidelity bond**, which is a time-locked Bitcoin deposit used to signal long-term commitment and resist Sybil attacks.
 
-Coinswap's `makerd` daemon is usually operated through `maker-cli`. Maker Dashboard provides a browser-based interface on top of the same underlying coinswap library.
+OpenSwap's `makerd` daemon is usually operated through `maker-cli`. Maker Dashboard provides a browser-based interface on top of the same underlying openswap library.
 
-For protocol background, see the [Coinswap documentation](https://github.com/citadel-tech/coinswap/tree/master/docs).
+For protocol background, see the [OpenSwap documentation](https://github.com/citadel-foss/openswap/tree/master/docs).
 
 ## Prerequisites
 
@@ -174,7 +174,7 @@ Dashboard-managed files:
 
 - Auth config (argon2id hash + salts): `~/.config/maker-dashboard/auth.json`
 - Encrypted maker configs: `~/.config/maker-dashboard/makers.json`
-- Per-maker logs: `~/.coinswap/{id}/debug.log`
+- Per-maker logs: `~/.openswap/{id}/debug.log`
 
 Maker wallet and data directories are configured per maker and may differ from the dashboard config directory.
 
@@ -201,7 +201,7 @@ On first setup, the maker may need funds to create a fidelity bond. You can use 
 ### Run From The Published Image
 
 Pre-built images are published to Docker Hub at
-[`coinswap/maker-dashboard`](https://hub.docker.com/r/coinswap/maker-dashboard).
+[`openswap/maker-dashboard`](https://hub.docker.com/r/openswap/maker-dashboard).
 Available tags: `latest` (newest stable release), `master` (latest `main`
 build), `vX.Y.Z` (specific release), and `sha-<commit>` (specific commit). Images
 are multi-arch (`linux/amd64`, `linux/arm64`) and signed with cosign.
@@ -215,7 +215,7 @@ docker run -d \
   --name maker-dashboard \
   --network host \
   -v maker-dashboard-config:/home/appuser/.config/maker-dashboard \
-  coinswap/maker-dashboard:latest
+  openswap/maker-dashboard:latest
 ```
 
 If you prefer port mapping over host networking, bind the dashboard to all
@@ -227,7 +227,7 @@ docker run -d \
   --name maker-dashboard \
   -p 3000:3000 \
   -v maker-dashboard-config:/home/appuser/.config/maker-dashboard \
-  coinswap/maker-dashboard:latest \
+  openswap/maker-dashboard:latest \
   ./maker-dashboard --host 0.0.0.0 --disable-secure-cookies
 ```
 
@@ -236,7 +236,7 @@ container restarts and upgrades. To upgrade, pull a newer tag and recreate the
 container:
 
 ```sh
-docker pull coinswap/maker-dashboard:latest
+docker pull openswap/maker-dashboard:latest
 docker rm -f maker-dashboard
 # re-run the docker run command above
 ```
@@ -319,8 +319,8 @@ Packaging assets for Umbrel, myNode, Docker, and related deployment targets live
 
 ## References
 
-- [Coinswap repository](https://github.com/citadel-tech/coinswap)
-- [Coinswap maker docs](https://github.com/citadel-tech/coinswap/blob/master/docs/makerd.md)
-- [maker-cli reference](https://github.com/citadel-tech/coinswap/blob/master/docs/maker-cli.md)
-- [Bitcoind setup guide](https://github.com/citadel-tech/coinswap/blob/master/docs/bitcoind.md)
+- [OpenSwap repository](https://github.com/citadel-foss/openswap)
+- [OpenSwap maker docs](https://github.com/citadel-foss/openswap/blob/master/docs/makerd.md)
+- [maker-cli reference](https://github.com/citadel-foss/openswap/blob/master/docs/maker-cli.md)
+- [Bitcoind setup guide](https://github.com/citadel-foss/openswap/blob/master/docs/bitcoind.md)
 - [Architecture overview](docs/ARCH.md)

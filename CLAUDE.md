@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-Maker Dashboard is a full-stack application for managing Coinswap maker nodes. The Rust/Axum backend exposes a REST API; the React/TypeScript frontend is served as static files from the same process in production. Makers are liquidity providers in the Coinswap privacy protocol.
+Maker Dashboard is a full-stack application for managing OpenSwap maker nodes. The Rust/Axum backend exposes a REST API; the React/TypeScript frontend is served as static files from the same process in production. Makers are liquidity providers in the OpenSwap privacy protocol.
 
 ## Commands
 
@@ -56,7 +56,7 @@ HTTP request → restrict_to_localhost middleware → Axum router
     → api handler (acquires Arc<Mutex<MakerManager>>)
     → MakerManager (orchestration + persistence)
     → MakerPool (routes to the correct running maker)
-    → bidirectional channel → maker background thread (Coinswap lib)
+    → bidirectional channel → maker background thread (OpenSwap lib)
 ```
 
 ### Key modules
@@ -75,7 +75,7 @@ HTTP request → restrict_to_localhost middleware → Axum router
 
 ### Important design constraints
 
-- Each maker runs in its own OS thread (Coinswap lib is synchronous). The Axum async layer talks to maker threads via `bidirectional_channel`.
+- Each maker runs in its own OS thread (OpenSwap lib is synchronous). The Axum async layer talks to maker threads via `bidirectional_channel`.
 - Makers are NOT auto-started on dashboard restart — configs are restored from disk but makers start stopped.
 - Config updates (`PUT /api/makers/:id/config`) tear down and re-initialize the maker; if re-init fails, the old config is restored.
 - Localhost-only access is enforced by middleware unless `--allow-remote` / `DASHBOARD_ALLOW_REMOTE` is set.

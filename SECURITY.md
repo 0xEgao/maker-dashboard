@@ -57,12 +57,12 @@ You may be able to access the dashboard if you use this option and run it inside
 ## Hot wallet
 
 Each maker holds a hot wallet. Private keys are stored unencrypted on disk under
-`~/.coinswap/{id}/wallets/`. Anyone with read access to those files can sweep the wallet.
+`~/.openswap/{id}/wallets/`. Anyone with read access to those files can sweep the wallet.
 Secure the directory with appropriate filesystem permissions and treat that path like any
 other hot wallet.
 
 You can set a wallet password at creation time via the `password` field in the creation
-request. When set, the coinswap library encrypts the wallet file at rest.
+request. When set, the openswap library encrypts the wallet file at rest.
 
 Back up the wallet files before making configuration changes or upgrading.
 
@@ -80,5 +80,5 @@ and make sure you have a wallet backup or the seed phrase stored safely.
 ## Reporting vulnerabilities
 
 Please report security issues privately to the maintainers via the
-[GitHub Security Advisories](https://github.com/citadel-tech/maker-dashboard/security/advisories/new)
+[GitHub Security Advisories](https://github.com/citadel-foss/maker-dashboard/security/advisories/new)
 page rather than opening a public issue.

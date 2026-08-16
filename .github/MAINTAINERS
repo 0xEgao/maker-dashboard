@@ -1,7 +1,7 @@
 # Project maintainers.
 # One GitHub handle per line, without the leading '@'.
 # Lines starting with '#' and blank lines are ignored.
-# Used by automated workflows (e.g. .github/workflows/update-coinswap.yml)
+# Used by automated workflows (e.g. .github/workflows/update-openswap.yml)
 # to request reviews on bot-authored PRs.
 
 keraliss

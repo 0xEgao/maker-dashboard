@@ -141,7 +141,7 @@ jobs:
           cp "target/${{ matrix.target }}/release/maker-dashboard" "$root/usr/local/bin/"
           pkgbuild \
             --root "$root" \
-            --identifier tech.citadel.maker-dashboard \
+            --identifier xyz.citadelfoss.maker-dashboard \
             --version "$version" \
             --install-location / \
             "maker-dashboard-v${version}-${{ matrix.target }}.pkg"

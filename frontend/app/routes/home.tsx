@@ -70,7 +70,7 @@ function FirstRunWelcome({ onStart }: { onStart: () => void }) {
     {
       icon: ShieldCheck,
       title: "Privacy-first",
-      desc: "Coinswap breaks transaction graph links without requiring a trusted coordinator.",
+      desc: "OpenSwap breaks transaction graph links without requiring a trusted coordinator.",
     },
     {
       icon: Coins,
@@ -94,8 +94,8 @@ function FirstRunWelcome({ onStart }: { onStart: () => void }) {
               Signet
             </span>
             <div className="cs-home-title-row">
-              <span className="cs-home-mark">C</span>
-              <h1>Coinswap Maker</h1>
+              <span className="cs-home-mark">O</span>
+              <h1>OpenSwap Maker</h1>
             </div>
             <p>Set up your first maker and start operating liquidity.</p>
           </div>
@@ -329,10 +329,10 @@ export default function Home() {
               Signet
             </span>
             <div className="cs-home-title-row">
-              <span className="cs-home-mark">C</span>
-              <h1>Coinswap Maker</h1>
+              <span className="cs-home-mark">O</span>
+              <h1>OpenSwap Maker</h1>
             </div>
-            <p>Operate maker instances · earn fees from Coinswap takers</p>
+            <p>Operate maker instances · earn fees from OpenSwap takers</p>
           </div>
           <div className="cs-home-metrics" aria-label="Dashboard summary">
             <article className="cs-home-metric orange">

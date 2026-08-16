@@ -104,7 +104,7 @@ export default function Setup() {
               <span className="cs-dot" />
               First run
             </span>
-            <h1>Coinswap Maker</h1>
+            <h1>OpenSwap Maker</h1>
             <p>Choose a dashboard password before creating makers.</p>
           </div>
 

@@ -3,7 +3,7 @@ version: "3.7"
 services:
   app_proxy:
     environment:
-      APP_HOST: coinswap-maker_tor_1
+      APP_HOST: openswap-maker_tor_1
       APP_PORT: 3000
 
   tor:
@@ -17,7 +17,7 @@ services:
       HOME: "/tmp"
 
   web:
-    image: coinswap/maker-dashboard:master
+    image: openswap/maker-dashboard:master
     restart: on-failure
     stop_grace_period: 1m
     network_mode: "service:tor"
@@ -25,7 +25,7 @@ services:
       - tor
     volumes:
       - ${APP_DATA_DIR}/data/config:/root/.config/maker-dashboard
-      - ${APP_DATA_DIR}/data/coinswap:/root/.coinswap
+      - ${APP_DATA_DIR}/data/openswap:/root/.openswap
     environment:
       MAKER_DASHBOARD_HOST: 0.0.0.0
       MAKER_DASHBOARD_PORT: "3000"

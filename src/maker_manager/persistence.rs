@@ -166,7 +166,7 @@ impl Default for DashboardSettings {
 /// Handles persisting maker configurations to disk.
 ///
 /// This only manages the dashboard's own config (e.g. `~/.config/maker-dashboard/makers.json`).
-/// Maker wallet/data directories live under `~/.coinswap/` and are managed by coinswap itself.
+/// Maker wallet/data directories live under `~/.openswap/` and are managed by openswap itself.
 pub struct PersistenceManager {
     pub config_dir: PathBuf,
     enc_key: Option<[u8; 32]>,

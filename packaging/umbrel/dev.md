@@ -1,13 +1,13 @@
 # Umbrel Packaging
 
-Coinswap Maker Dashboard packaged for the [Umbrel app store](https://github.com/getumbrel/umbrel-apps).
+OpenSwap Maker Dashboard packaged for the [Umbrel app store](https://github.com/getumbrel/umbrel-apps).
 
 ## Architecture
 
 The app runs three containers:
 
 - **tor:** Tor proxy providing SOCKS (9050) and control (9051) ports
-- **web:** The maker-dashboard binary, sharing Tor's network via `network_mode: "service:tor"` so the coinswap library can reach Tor at `127.0.0.1`
+- **web:** The maker-dashboard binary, sharing Tor's network via `network_mode: "service:tor"` so the openswap library can reach Tor at `127.0.0.1`
 - **app_proxy:** Umbrel's auth proxy, routes traffic to the web container through the Tor container's hostname
 
 ## Files
@@ -22,7 +22,7 @@ The app runs three containers:
 ## Prerequisites
 
 - [Umbrel dev environment](https://github.com/getumbrel/umbrel) cloned and running
-- Docker image `coinswap/maker-dashboard:master` published on Docker Hub
+- Docker image `openswap/maker-dashboard:master` published on Docker Hub
 
 ## Testing locally
 
@@ -82,10 +82,10 @@ Uninstalls the previous version, copies updated files, and installs again.
 
 Data is stored in two volumes:
 - `/root/.config/maker-dashboard` — dashboard config (`makers.json`)
-- `/root/.coinswap` — coinswap wallet and data directories
+- `/root/.openswap` — openswap wallet and data directories
 
 ## Tor
 
-The coinswap library hardcodes Tor connections to `127.0.0.1`. To work around this in Docker (where Tor runs in a separate container), the web container uses `network_mode: "service:tor"` to share the Tor container's network namespace. Both containers see the same `127.0.0.1`.
+The openswap library hardcodes Tor connections to `127.0.0.1`. To work around this in Docker (where Tor runs in a separate container), the web container uses `network_mode: "service:tor"` to share the Tor container's network namespace. Both containers see the same `127.0.0.1`.
 
 The Tor control password is `moneyprintergobrrr` (standard across Umbrel apps). Pass this as `tor_auth` when creating a maker.

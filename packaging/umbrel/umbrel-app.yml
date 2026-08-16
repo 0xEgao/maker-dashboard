@@ -1,12 +1,12 @@
 manifestVersion: 1
-id: coinswap-maker
+id: openswap-maker
 category: bitcoin
-name: Coinswap Maker Dashboard
+name: OpenSwap Maker Dashboard
 version: "0.1.0"
-tagline: Manage your Coinswap maker node with a web UI
+tagline: Manage your OpenSwap maker node with a web UI
 description: >-
-  Coinswap Maker Dashboard is a web-based management interface for running
-  a Coinswap maker node. Makers are liquidity providers in the Coinswap
+  OpenSwap Maker Dashboard is a web-based management interface for running
+  a OpenSwap maker node. Makers are liquidity providers in the OpenSwap
   privacy protocol - they route Bitcoin through their wallets to break
   transaction history, earning fees in the process.
 
@@ -16,16 +16,16 @@ description: >-
   (time-locked Bitcoin deposits that prove commitment), and monitor
   maker activity. All from your browser!
 releaseNotes: ""
-developer: Citadel Tech
-website: https://github.com/citadel-tech/maker-dashboard
+developer: Citadel FOSS
+website: https://github.com/citadel-foss/maker-dashboard
 dependencies:
   - bitcoin
-repo: https://github.com/citadel-tech/maker-dashboard
-support: https://github.com/citadel-tech/maker-dashboard/issues
+repo: https://github.com/citadel-foss/maker-dashboard
+support: https://github.com/citadel-foss/maker-dashboard/issues
 port: 3010
 gallery: []
 path: ""
 defaultUsername: ""
 defaultPassword: ""
-submitter: Citadel Tech
+submitter: Citadel FOSS
 submission: ""

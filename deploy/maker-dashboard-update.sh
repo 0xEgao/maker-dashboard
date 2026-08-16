@@ -14,8 +14,8 @@ flock -n 9 || {
 	exit 0
 }
 
-IMAGE="${IMAGE:-docker.io/coinswap/maker-dashboard:master}"
-REPO="${REPO:-citadel-tech/maker-dashboard}"
+IMAGE="${IMAGE:-docker.io/openswap/maker-dashboard:master}"
+REPO="${REPO:-citadel-foss/maker-dashboard}"
 WORKFLOW_PATH="${WORKFLOW_PATH:-.github/workflows/docker-publish.yml}"
 BRANCH="${BRANCH:-main}"
 SERVICE="${SERVICE:-maker-dashboard.service}"

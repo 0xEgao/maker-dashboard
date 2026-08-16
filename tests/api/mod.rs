@@ -2,7 +2,7 @@
 //!
 //! Each sub-module tests one category of API endpoints.
 //! All tests use `test_app()` which builds a fresh router backed by an empty
-//! `MakerManager` — no Bitcoin RPC or real coinswap infrastructure required.
+//! `MakerManager` — no Bitcoin RPC or real openswap infrastructure required.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

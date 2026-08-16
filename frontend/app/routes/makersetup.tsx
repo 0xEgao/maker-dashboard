@@ -368,7 +368,7 @@ export default function MakerSetup() {
         </div>
       ),
       title: "Maker is Live!",
-      subtitle: "Your maker is active on the coinswap network",
+      subtitle: "Your maker is active on the openswap network",
       color: "emerald",
     },
     error: {
@@ -682,7 +682,7 @@ export default function MakerSetup() {
                   />
                 </svg>
                 <span className="text-sm text-emerald-200">
-                  Fidelity bond confirmed. Your maker is live on the coinswap
+                  Fidelity bond confirmed. Your maker is live on the openswap
                   network and accepting swaps.
                 </span>
               </div>

@@ -4,7 +4,7 @@
 //   - Fund each maker wallet and verify balance + UTXO endpoints.
 //   - Start both makers via POST /api/makers/{id}/start.
 //   - Update one maker's config and assert the change is reflected.
-//   - Run a standard coinswap between a taker and the two makers.
+//   - Run a standard openswap between a taker and the two makers.
 //   - Verify files in each maker's data directory are present post-swap.
 //   - Restart both makers via POST /api/makers/{id}/restart.
 //   - Re-sync wallets and assert all balances / UTXO counts are still consistent.
@@ -13,12 +13,12 @@
 
 use bitcoin::Amount;
 use bitcoind::{bitcoincore_rpc::RpcApi, BitcoinD};
-use coinswap::{
+use maker_dashboard::server::{Server, ServerConfig};
+use openswap::{
     protocol::ProtocolVersion,
     taker::{SwapParams, Taker, TakerInitConfig},
-    wallet::{AddressType, RPCConfig},
+    wallet::{AddressType, BackendConfig, CoreRpcConfig},
 };
-use maker_dashboard::server::{Server, ServerConfig};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{
@@ -476,9 +476,9 @@ fn wait_for_maker_alive(client: &ApiClient, id: &str, timeout: Duration) {
     }
 }
 
-/// Mine blocks until the maker's coinswap server accepts TCP connections on
+/// Mine blocks until the maker's openswap server accepts TCP connections on
 /// `port`.  A successful TCP connect signals that fidelity bond setup is done.
-fn wait_for_coinswap_server_ready(bitcoind: &BitcoinD, port: u16, timeout: Duration) {
+fn wait_for_openswap_server_ready(bitcoind: &BitcoinD, port: u16, timeout: Duration) {
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -488,7 +488,7 @@ fn wait_for_coinswap_server_ready(bitcoind: &BitcoinD, port: u16, timeout: Durat
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "Coinswap server on port {port} did not start within {timeout:?}"
+            "OpenSwap server on port {port} did not start within {timeout:?}"
         );
         thread::sleep(Duration::from_secs(3));
     }
@@ -620,26 +620,29 @@ fn test_maker_manager_integration() {
 
     // Create taker before starting makers so its ZMQ watcher is live when fidelity bonds are mined
     println!("[INFO] Creating and funding taker");
-    let rpc_config = RPCConfig {
+    let backend = BackendConfig::CoreRpc(CoreRpcConfig {
         url: rpc_url.clone(),
         auth: bitcoind::bitcoincore_rpc::Auth::UserPass(
             rpc_creds.user.clone(),
             rpc_creds.pass.clone(),
         ),
+        zmq_addr: zmq_addr.clone(),
+        ..Default::default()
+    });
+
+    let taker_config = TakerInitConfig {
+        data_dir: Some(taker_dir.clone()),
+        wallet_name: "taker".into(),
+        backend,
         ..Default::default()
     };
 
-    let taker_config = TakerInitConfig::default()
-        .with_data_dir(taker_dir.clone())
-        .with_wallet_name("taker".into())
-        .with_rpc_config(rpc_config)
-        .with_zmq_addr(zmq_addr.clone());
-
     let mut taker = Taker::init(taker_config).expect("Taker::init");
 
+    let sync_shutdown = AtomicBool::new(false);
     {
         let mut wallet = taker.get_wallet().write().unwrap();
-        wallet.sync_and_save().unwrap();
+        wallet.sync_and_save(&sync_shutdown).unwrap();
         for _ in 0..3u32 {
             let addr = wallet
                 .get_next_external_address(AddressType::P2WPKH)
@@ -648,9 +651,14 @@ fn test_maker_manager_integration() {
         }
     }
     generate_blocks(&bitcoind, 1);
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&sync_shutdown)
+        .unwrap();
 
-    // Start both makers and wait for their coinswap servers to be ready
+    // Start both makers and wait for their openswap servers to be ready
     println!("[INFO] Starting makers");
     client.start_maker(MAKER_ALPHA_ID);
     client.start_maker(MAKER_BETA_ID);
@@ -676,8 +684,8 @@ fn test_maker_manager_integration() {
     wait_for_maker_alive(&client, MAKER_ALPHA_ID, Duration::from_secs(60));
     wait_for_maker_alive(&client, MAKER_BETA_ID, Duration::from_secs(60));
 
-    wait_for_coinswap_server_ready(&bitcoind, MAKER_ALPHA_PORT, Duration::from_secs(300));
-    wait_for_coinswap_server_ready(&bitcoind, MAKER_BETA_PORT, Duration::from_secs(300));
+    wait_for_openswap_server_ready(&bitcoind, MAKER_ALPHA_PORT, Duration::from_secs(300));
+    wait_for_openswap_server_ready(&bitcoind, MAKER_BETA_PORT, Duration::from_secs(300));
 
     let (_, alpha_running) = client.get_status(MAKER_ALPHA_ID);
     let (_, beta_running) = client.get_status(MAKER_BETA_ID);
@@ -735,7 +743,7 @@ fn test_maker_manager_integration() {
 
     thread::sleep(Duration::from_secs(3));
     wait_for_maker_alive(&client, MAKER_ALPHA_ID, Duration::from_secs(30));
-    wait_for_coinswap_server_ready(&bitcoind, MAKER_ALPHA_PORT, Duration::from_secs(300));
+    wait_for_openswap_server_ready(&bitcoind, MAKER_ALPHA_PORT, Duration::from_secs(300));
 
     let detail = client.get_maker_detail(MAKER_ALPHA_ID);
     assert_eq!(
@@ -749,24 +757,24 @@ fn test_maker_manager_integration() {
         "network_port changed unexpectedly"
     );
 
-    // Run coinswap — block-gen thread (started earlier) keeps mining during execution
-    println!("[INFO] Initiating coinswap");
+    // Run openswap — block-gen thread (started earlier) keeps mining during execution
+    println!("[INFO] Initiating openswap");
     wait_for_maker_alive(&client, MAKER_BETA_ID, Duration::from_secs(30));
 
     let swap_summary = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500_000), 2)
                 .with_preferred_makers(vec![
                     format!("127.0.0.1:{MAKER_ALPHA_PORT}"),
                     format!("127.0.0.1:{MAKER_BETA_PORT}"),
                 ]),
         )
-        .expect("prepare_coinswap failed");
+        .expect("prepare_swap failed");
     taker
-        .start_coinswap(&swap_summary.swap_id)
-        .expect("coinswap failed");
+        .start_swap(&swap_summary.swap_id)
+        .expect("openswap failed");
 
-    println!("[INFO] Coinswap completed");
+    println!("[INFO] OpenSwap completed");
 
     client.sync_wallet(MAKER_ALPHA_ID);
     client.sync_wallet(MAKER_BETA_ID);
@@ -833,8 +841,8 @@ fn test_maker_manager_integration() {
 
     wait_for_maker_alive(&client, MAKER_ALPHA_ID, Duration::from_secs(60));
     wait_for_maker_alive(&client, MAKER_BETA_ID, Duration::from_secs(60));
-    wait_for_coinswap_server_ready(&bitcoind, MAKER_ALPHA_PORT, Duration::from_secs(300));
-    wait_for_coinswap_server_ready(&bitcoind, MAKER_BETA_PORT, Duration::from_secs(300));
+    wait_for_openswap_server_ready(&bitcoind, MAKER_ALPHA_PORT, Duration::from_secs(300));
+    wait_for_openswap_server_ready(&bitcoind, MAKER_BETA_PORT, Duration::from_secs(300));
 
     client.sync_wallet(MAKER_ALPHA_ID);
     client.sync_wallet(MAKER_BETA_ID);

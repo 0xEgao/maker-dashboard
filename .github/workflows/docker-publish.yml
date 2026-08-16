@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: coinswap/maker-dashboard
+  IMAGE_NAME: openswap/maker-dashboard
 
 jobs:
   build:

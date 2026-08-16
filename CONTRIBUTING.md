@@ -23,7 +23,7 @@ pacman -S --needed autoconf automake libtool patch make
 ```
 
 ```sh
-git clone https://github.com/citadel-tech/maker-dashboard
+git clone https://github.com/citadel-foss/maker-dashboard
 cd maker-dashboard
 cargo build
 cd frontend && npm install

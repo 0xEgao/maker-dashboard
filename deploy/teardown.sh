@@ -4,7 +4,7 @@
 #
 # Preserves the data dirs by default:
 #   /var/lib/maker-dashboard/          - auth.json + encrypted maker configs
-#   /var/lib/maker-dashboard-coinswap/ - maker WALLETS, fidelity bonds, swap
+#   /var/lib/maker-dashboard-openswap/ - maker WALLETS, fidelity bonds, swap
 #                                        history, per-maker Tor keys
 # Other state (Matrix credentials, ntfy topic, forwarder cursor, cached Docker
 # image) is removed interactively.
@@ -14,12 +14,12 @@
 set -uo pipefail
 
 DATA_DIR="/var/lib/maker-dashboard"
-WALLET_DIR="/var/lib/maker-dashboard-coinswap"
+WALLET_DIR="/var/lib/maker-dashboard-openswap"
 MC_DIR="/etc/maker-dashboard/matrix-commander"
 NTFY_ENV="/etc/maker-dashboard/ntfy.env"
 FORWARDER_STATE="/var/lib/maker-dashboard-forwarder"
 MC_VENV="/opt/maker-dashboard/matrix-commander-venv"
-IMAGE="docker.io/coinswap/maker-dashboard"
+IMAGE="docker.io/openswap/maker-dashboard"
 
 bold()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 info()  { printf '  %s\n' "$*"; }

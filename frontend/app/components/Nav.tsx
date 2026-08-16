@@ -164,7 +164,7 @@ export default function Nav() {
               to="/"
               className="text-xl lg:text-3xl font-bold text-orange-500"
             >
-              Coinswap Maker Dashboard
+              OpenSwap Maker Dashboard
             </Link>
             <div className="flex items-center gap-3">
               <button

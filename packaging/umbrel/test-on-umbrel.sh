@@ -2,7 +2,7 @@
 set -euo pipefail
 
 UMBREL_HOST="${UMBREL_HOST:-umbrel-dev.local}"
-APP_ID="coinswap-maker"
+APP_ID="openswap-maker"
 APP_STORE_PATH="/home/umbrel/umbrel/app-stores/getumbrel-umbrel-apps-github-53f74447"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 UMBREL_DIR="${UMBREL_DIR:-$(mktemp -d)/umbrel}"

@@ -2,15 +2,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 
 use anyhow::{anyhow, Result};
-use coinswap::bitcoin::{Address, Amount};
-use coinswap::maker::{start_server, MakerServer};
-use coinswap::protocol::common_messages::COINSWAP_PORT;
-use coinswap::utill::UTXO;
-use coinswap::wallet::{AddressType, Destination, Wallet};
+use openswap::bitcoin::{Address, Amount};
+use openswap::maker::{start_server, MakerServer};
+use openswap::protocol::common_messages::OPENSWAP_PORT;
+use openswap::utill::UTXO;
+use openswap::wallet::{AddressType, Destination, Wallet};
 use tokio::{runtime::Runtime, sync::Mutex};
 
 use super::message::{MessageRequest, MessageResponse};
@@ -18,6 +19,10 @@ use crate::utils::bidirectional_channel::{channel, Requester, Responder};
 
 /// Unique identifier for each maker in the pool
 pub type MakerId = String;
+
+/// Shutdown flag for manual wallet syncs triggered via the API. Never set;
+/// the openswap wallet sync loop checks it for cooperative cancellation.
+static SYNC_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 /// Trait abstracting wallet access across maker types
 pub trait MakerWalletAccess: Send + Sync + 'static {
@@ -69,7 +74,7 @@ fn read_tor_address(data_dir: &Path, _network_port: u16) -> Result<String> {
         }
     };
 
-    Ok(format!("{hostname}:{COINSWAP_PORT}"))
+    Ok(format!("{hostname}:{OPENSWAP_PORT}"))
 }
 
 /// Unified request handler for any maker implementing `MakerWalletAccess`
@@ -204,7 +209,7 @@ fn handle_request(
             };
             match maker.wallet().write() {
                 Ok(mut wallet) => {
-                    if let Err(e) = wallet.sync_and_save() {
+                    if let Err(e) = wallet.sync_and_save(&SYNC_SHUTDOWN) {
                         return Ok(MessageResponse::ServerError(format!("Sync failed: {e:?}")));
                     }
                 }
@@ -235,7 +240,7 @@ fn handle_request(
             loop {
                 match maker.wallet().try_write() {
                     Ok(mut wallet) => {
-                        break match wallet.sync_and_save() {
+                        break match wallet.sync_and_save(&SYNC_SHUTDOWN) {
                             Ok(_) => MessageResponse::Pong,
                             Err(e) => MessageResponse::ServerError(e.to_string()),
                         }
@@ -333,7 +338,7 @@ impl MakerPool {
     }
 
     /// Registers a new maker in the pool and spawns its message loop thread.
-    /// The maker is NOT started (no coinswap server). Call `start_server` separately.
+    /// The maker is NOT started (no openswap server). Call `start_server` separately.
     pub fn spawn_maker(
         &mut self,
         id: MakerId,
@@ -364,7 +369,7 @@ impl MakerPool {
         Ok(())
     }
 
-    /// Starts the coinswap server for a registered maker.
+    /// Starts the openswap server for a registered maker.
     /// Spawns `start_server` in a new thread.
     pub fn start_server(&mut self, id: &MakerId) -> Result<()> {
         let entry = self
@@ -395,7 +400,7 @@ impl MakerPool {
         Ok(())
     }
 
-    /// Stops the coinswap server for a registered maker.
+    /// Stops the openswap server for a registered maker.
     /// Sets the shutdown flag and joins the server thread.
     /// The maker remains registered — wallet queries still work.
     pub fn stop_server(&mut self, id: &MakerId) -> Result<()> {
@@ -421,7 +426,7 @@ impl MakerPool {
         Ok(())
     }
 
-    /// Returns true if the maker's coinswap server is currently running
+    /// Returns true if the maker's openswap server is currently running
     pub fn is_server_running(&self, id: &MakerId) -> bool {
         self.makers
             .get(id)
