@@ -2,13 +2,16 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use utoipa::ToSchema;
 
-use crate::maker_manager::{MakerConfig, MakerInfo as ManagerMakerInfo, MakerState};
+use crate::maker_manager::{MakerBackend, MakerConfig, MakerInfo as ManagerMakerInfo, MakerState};
 
 /// Request body for `POST /api/makers`
 #[derive(Deserialize, ToSchema)]
 pub struct CreateMakerRequest {
     #[schema(example = "maker1")]
     pub id: String,
+    /// Chain-data backend: "electrum" (default, no local node) or "bitcoind".
+    #[schema(example = "electrum")]
+    pub backend: Option<MakerBackend>,
     #[schema(example = "127.0.0.1:38332")]
     pub rpc: Option<String>,
     #[schema(example = "tcp://127.0.0.1:28332")]
@@ -92,6 +95,7 @@ impl UpdateMakerConfigRequest {
     /// Merges the update request on top of a base `MakerConfig`, overriding only provided fields.
     pub fn apply_to(self, base: MakerConfig) -> MakerConfig {
         MakerConfig {
+            backend: base.backend,
             data_directory: self
                 .data_directory
                 .map(PathBuf::from)
@@ -206,6 +210,7 @@ impl From<MakerState> for MakerStateDto {
 pub struct MakerInfoDetailed {
     pub id: String,
     pub state: MakerStateDto,
+    pub backend: MakerBackend,
     pub rpc: String,
     pub zmq: String,
     pub rpc_user: String,
@@ -237,6 +242,7 @@ impl From<ManagerMakerInfo> for MakerInfoDetailed {
         Self {
             id: info.id,
             state: info.state.into(),
+            backend: config.backend,
             rpc: config.rpc,
             zmq: config.zmq,
             rpc_user,
@@ -375,6 +381,7 @@ pub enum StartupCheckKind {
     Rest,
     Zmq,
     Tor,
+    Electrum,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

@@ -11,6 +11,7 @@ use super::{
     dto::{ApiResponse, StartupCheckKind, StartupCheckRequest, StartupCheckResponse},
     AppState,
 };
+use crate::maker_manager::ELECTRUM_URL;
 
 const DEFAULT_RPC_ADDR: &str = "127.0.0.1:38332";
 const DEFAULT_RPC_USER: &str = "user";
@@ -58,6 +59,31 @@ fn run_check(body: StartupCheckRequest) -> StartupCheckResponse {
         StartupCheckKind::Rest => check_rest(&body),
         StartupCheckKind::Zmq => check_zmq(&body),
         StartupCheckKind::Tor => check_tor(&body),
+        StartupCheckKind::Electrum => check_electrum(),
+    }
+}
+
+/// TCP reachability probe against the hardcoded Electrum server every maker
+/// uses for chain data. Uses a longer timeout than the local checks — this is
+/// a remote host.
+fn check_electrum() -> StartupCheckResponse {
+    let check = StartupCheckKind::Electrum;
+    let host_port = ELECTRUM_URL
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(ELECTRUM_URL);
+    let addr = match first_socket_addr(host_port) {
+        Ok(addr) => addr,
+        Err(detail) => return fail(check, "Could not parse the Electrum address", detail),
+    };
+
+    match TcpStream::connect_timeout(&addr, Duration::from_secs(5)) {
+        Ok(_) => success(
+            check,
+            format!("Electrum server is reachable at {host_port}"),
+            Some("TCP connection to the Electrum server succeeded".to_string()),
+        ),
+        Err(e) => fail(check, "Could not reach the Electrum server", e.to_string()),
     }
 }
 

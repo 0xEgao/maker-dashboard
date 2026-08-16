@@ -320,7 +320,7 @@ export default function MakerSetup() {
         </div>
       ),
       title: "Starting Maker",
-      subtitle: "Initializing wallet and connecting to Bitcoin Core…",
+      subtitle: "Initializing wallet and connecting to Electrum…",
       color: "orange",
     },
     awaiting_funds: {

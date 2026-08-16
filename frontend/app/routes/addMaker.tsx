@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -7,8 +7,7 @@ import {
   Eye,
   EyeOff,
   LoaderCircle,
-  Plus,
-  RefreshCw,
+  Play,
   X,
 } from "lucide-react";
 import {
@@ -16,58 +15,43 @@ import {
   makers,
   onboarding,
   type CreateMakerRequest,
-  type StartupCheckKind,
+  type MakerBackend,
 } from "../api";
 
-type CheckId = "bitcoin" | "rpc" | "rest" | "zmq" | "tor";
+type CheckId = "electrum" | "bitcoin" | "tor";
 
 type CheckState = {
   status: "idle" | "loading" | "success" | "error";
   message?: string;
-  detail?: string;
 };
 
-type PasswordField = "password" | "bitcoinPassword" | "torAuth";
-
-const CHECKS: Array<{
+type CheckRowDef = {
   id: CheckId;
   title: string;
   desc: string;
-}> = [
-  {
-    id: "bitcoin",
-    title: "Bitcoin Core is running and fully synced",
-    desc: "Fully synced node - testnet, regtest, or signet work for testing.",
-  },
-  {
-    id: "rpc",
-    title: "Bitcoin Core RPC is enabled",
-    desc: "rpcuser, rpcpassword, and server=1 set in bitcoin.conf.",
-  },
-  {
-    id: "rest",
-    title: "Bitcoin Core REST is enabled",
-    desc: "Dashboard checks /rest/chaininfo.json - needs rest=1 in bitcoin.conf.",
-  },
-  {
-    id: "zmq",
-    title: "ZMQ notifications are configured",
-    desc: "zmqpubrawblock and zmqpubrawtx endpoints reachable on the configured port.",
-  },
-  {
-    id: "tor",
-    title: "Tor is running",
-    desc: "Required for taker discovery, fidelity bonds, and routing all swap requests.",
-  },
-];
-
-const EMPTY_CHECKS: Record<CheckId, CheckState> = {
-  bitcoin: { status: "idle" },
-  rpc: { status: "idle" },
-  rest: { status: "idle" },
-  zmq: { status: "idle" },
-  tor: { status: "idle" },
 };
+
+const ELECTRUM_CHECK: CheckRowDef = {
+  id: "electrum",
+  title: "Checking Electrum",
+  desc: "Reaching the Electrum server used for chain data.",
+};
+
+const BITCOIND_CHECK: CheckRowDef = {
+  id: "bitcoin",
+  title: "Checking Bitcoin Core",
+  desc: "Bitcoin Core is running and fully synced.",
+};
+
+const TOR_CHECK: CheckRowDef = {
+  id: "tor",
+  title: "Checking Tor",
+  desc: "Tor SOCKS and control ports, needed for maker networking.",
+};
+
+function checksForBackend(backend: MakerBackend): CheckRowDef[] {
+  return [backend === "electrum" ? ELECTRUM_CHECK : BITCOIND_CHECK, TOR_CHECK];
+}
 
 function Field({
   label,
@@ -99,15 +83,7 @@ function Field({
   );
 }
 
-function CheckRow({
-  row,
-  state,
-  onRun,
-}: {
-  row: (typeof CHECKS)[number];
-  state: CheckState;
-  onRun: () => void;
-}) {
+function CheckRow({ row, state }: { row: CheckRowDef; state: CheckState }) {
   const isLoading = state.status === "loading";
   const isSuccess = state.status === "success";
   const isError = state.status === "error";
@@ -131,151 +107,50 @@ function CheckRow({
             {state.message}
           </span>
         )}
-        {state.detail && <span className="cs-add-detail">{state.detail}</span>}
       </div>
-      <button
-        type="button"
-        className="cs-add-check-action"
-        disabled={isLoading}
-        onClick={onRun}
-      >
-        {isLoading
-          ? "Testing..."
-          : isSuccess
-            ? "Passed"
-            : isError
-              ? "Retry"
-              : "Click to test"}
-      </button>
     </div>
   );
 }
 
 export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({
-    id: "",
-    bitcoinRpc: "127.0.0.1:38332",
-    bitcoinUser: "user",
-    bitcoinPassword: "password",
-    zmq: "tcp://127.0.0.1:28332",
-    dataDir: "",
-    password: "",
-    torAuth: "",
-    socksPort: "9050",
-    controlPort: "9051",
-    networkPort: "",
-    makerRpcPort: "",
-    requiredConfirms: "1",
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const [loadingPorts, setLoadingPorts] = useState(true);
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [backend, setBackend] = useState<MakerBackend>("electrum");
+  const [bitcoinRpc, setBitcoinRpc] = useState("127.0.0.1:38332");
+  const [bitcoinUser, setBitcoinUser] = useState("user");
+  const [bitcoinPassword, setBitcoinPassword] = useState("password");
+  const [showRpcPassword, setShowRpcPassword] = useState(false);
+  const [zmq, setZmq] = useState("tcp://127.0.0.1:28332");
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [checks, setChecks] =
-    useState<Record<CheckId, CheckState>>(EMPTY_CHECKS);
-  const [showPassword, setShowPassword] = useState<
-    Record<PasswordField, boolean>
-  >({
-    password: false,
-    bitcoinPassword: false,
-    torAuth: false,
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-
-    makers
-      .suggestedPorts()
-      .then((ports) => {
-        if (cancelled) return;
-        setFormData((prev) => ({
-          ...prev,
-          networkPort: String(ports.network_port),
-          makerRpcPort: String(ports.rpc_port),
-        }));
-      })
-      .catch((err: Error) => {
-        if (cancelled) return;
-        setError(err.message || "Failed to load maker ports");
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoadingPorts(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const passedCount = useMemo(
-    () => Object.values(checks).filter((c) => c.status === "success").length,
-    [checks],
+  const [checks, setChecks] = useState<Partial<Record<CheckId, CheckState>>>(
+    {},
   );
 
-  const isRunningAll = Object.values(checks).some(
-    (c) => c.status === "loading",
-  );
-  const allPassed = CHECKS.every((row) => checks[row.id].status === "success");
+  const activeChecks = checksForBackend(backend);
+  const checksStarted = Object.values(checks).some((c) => c && c.status !== "idle");
 
-  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const { name, value } = e.target;
-
-    if (
-      ["bitcoinRpc", "bitcoinUser", "bitcoinPassword", "zmq"].includes(name)
-    ) {
-      setChecks((prev) => ({
-        ...prev,
-        bitcoin: { status: "idle" },
-        rpc: { status: "idle" },
-        rest: { status: "idle" },
-        zmq: { status: "idle" },
-      }));
-    }
-    if (["socksPort", "controlPort"].includes(name)) {
-      setChecks((prev) => ({ ...prev, tor: { status: "idle" } }));
-    }
-
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  }
-
-  function togglePassword(field: PasswordField) {
-    setShowPassword((prev) => ({ ...prev, [field]: !prev[field] }));
-  }
-
-  async function runAllChecks() {
-    await Promise.all(CHECKS.map((row) => runCheck(row.id)));
-  }
-
-  async function runCheck(check: CheckId) {
-    setChecks((prev) => ({
-      ...prev,
-      [check]: { status: "loading", message: "Running check..." },
-    }));
+  async function runCheck(check: CheckId): Promise<boolean> {
+    setChecks((prev) => ({ ...prev, [check]: { status: "loading" } }));
 
     try {
       const result = await onboarding.startupCheck({
-        check: check as StartupCheckKind,
-        rpc: formData.bitcoinRpc,
-        rpc_user: formData.bitcoinUser,
-        rpc_password: formData.bitcoinPassword,
-        zmq: formData.zmq,
-        socks_port: formData.socksPort
-          ? parseInt(formData.socksPort, 10)
-          : undefined,
-        control_port: formData.controlPort
-          ? parseInt(formData.controlPort, 10)
-          : undefined,
+        check,
+        rpc: bitcoinRpc,
+        rpc_user: bitcoinUser,
+        rpc_password: bitcoinPassword,
+        zmq,
       });
-
       setChecks((prev) => ({
         ...prev,
         [check]: {
           status: result.success ? "success" : "error",
           message: result.message,
-          detail: result.detail,
         },
       }));
+      return result.success;
     } catch (err) {
       setChecks((prev) => ({
         ...prev,
@@ -284,75 +159,66 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
           message: err instanceof Error ? err.message : "Check failed",
         },
       }));
+      return false;
     }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (starting) return;
+
+    const id = name.trim();
+    if (!id) {
+      setError("Maker name cannot be empty.");
+      return;
+    }
+
     setError(null);
+    setStarting(true);
+    setChecks({});
 
-    if (!allPassed) {
-      setError("Run and pass all pre-checks before adding a maker.");
+    // Live startup checks — chain backend reachability and Tor readiness.
+    const results = await Promise.all(
+      activeChecks.map((row) => runCheck(row.id)),
+    );
+    if (results.some((ok) => !ok)) {
+      setError("Startup checks failed. Fix the problem above and try again.");
+      setStarting(false);
       return;
     }
-
-    if (!formData.networkPort || !formData.makerRpcPort) {
-      setError(
-        "Waiting for maker ports to be assigned. Try again in a moment.",
-      );
-      return;
-    }
-
-    setSubmitting(true);
 
     const body: CreateMakerRequest = {
-      id: formData.id,
-      rpc: formData.bitcoinRpc,
-      zmq: formData.zmq,
-      rpc_user: formData.bitcoinUser,
-      rpc_password: formData.bitcoinPassword,
-      wallet_name: formData.id || undefined,
-      data_directory: formData.dataDir || undefined,
-      password: formData.password || undefined,
-      tor_auth: formData.torAuth || undefined,
-      socks_port: formData.socksPort ? parseInt(formData.socksPort) : undefined,
-      control_port: formData.controlPort
-        ? parseInt(formData.controlPort)
-        : undefined,
-      network_port: formData.networkPort
-        ? parseInt(formData.networkPort)
-        : undefined,
-      rpc_port: formData.makerRpcPort
-        ? parseInt(formData.makerRpcPort)
-        : undefined,
-      required_confirms: formData.requiredConfirms
-        ? parseInt(formData.requiredConfirms)
-        : undefined,
+      id,
+      backend,
+      wallet_name: id,
+      password: password || undefined,
+      ...(backend === "bitcoind" && {
+        rpc: bitcoinRpc,
+        rpc_user: bitcoinUser,
+        rpc_password: bitcoinPassword,
+        zmq,
+      }),
     };
 
     try {
       await makers.create(body);
       try {
-        await makers.start(formData.id);
+        await makers.start(id);
       } catch (startErr) {
         if (!(startErr instanceof ApiError && startErr.status === 409)) {
           throw startErr;
         }
       }
-      navigate(`/makers/${formData.id}/setup`);
+      navigate(`/makers/${id}/setup`);
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
-        setError(`A maker with the ID "${formData.id}" already exists.`);
+        setError(`A maker named "${id}" already exists.`);
       } else {
         setError(err instanceof Error ? err.message : "Failed to create maker");
       }
-    } finally {
-      setSubmitting(false);
+      setStarting(false);
     }
   }
-
-  const passwordType = (field: PasswordField) =>
-    showPassword[field] ? "text" : "password";
 
   return (
     <div className="cs-page">
@@ -366,11 +232,7 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
               </Link>
             )}
             <h1>{firstRun ? "Create First Maker" : "Add New Maker"}</h1>
-            <p>
-              {firstRun
-                ? "Run the same live checks, then configure your first maker instance."
-                : "Configure a new maker instance."}
-            </p>
+            <p>Name your maker — everything else is configured for you.</p>
           </div>
           <div className="cs-network-badge cs-add-network">
             <span className="cs-dot" />
@@ -396,7 +258,7 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
           <section className="cs-card cs-add-basic">
             <div className="cs-card-head">
               <div>
-                <h2>Basic information</h2>
+                <h2>Maker</h2>
                 <p>
                   Identifies this maker across logs, RPC calls, and dashboards.
                 </p>
@@ -404,43 +266,29 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
             </div>
             <div className="cs-card-body cs-field-grid">
               <Field
-                label="Maker ID"
+                label="Maker name"
                 required
-                hint="Unique identifier - used in all API calls. Cannot be changed later."
-                className="cs-span-2"
-              >
-                <input
-                  className="cs-input"
-                  name="id"
-                  value={formData.id}
-                  onChange={handleChange}
-                  placeholder="e.g. maker-1"
-                  required
-                />
-              </Field>
-
-              <Field
-                label="Data directory"
-                optional
                 hint={
                   <>
-                    Where maker data is stored. Defaults to{" "}
-                    <code>~/.openswap/&lt;id&gt;</code>
+                    Unique identifier. Data is stored at{" "}
+                    <code>~/.openswap/&lt;name&gt;</code> automatically.
                   </>
                 }
                 className="cs-span-2"
               >
                 <input
                   className="cs-input"
-                  name="dataDir"
-                  value={formData.dataDir}
-                  onChange={handleChange}
-                  placeholder="e.g. ~/.openswap/maker-1 (leave blank for default)"
+                  name="name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. maker-1"
+                  disabled={starting}
+                  required
                 />
               </Field>
 
               <Field
-                label="Maker password"
+                label="Wallet password"
                 optional
                 hint="Encrypts the maker's wallet on disk."
                 className="cs-span-2"
@@ -448,296 +296,180 @@ export default function AddMaker({ firstRun = false }: { firstRun?: boolean }) {
                 <div className="cs-input-wrap">
                   <input
                     className="cs-input"
-                    type={passwordType("password")}
+                    type={showPassword ? "text" : "password"}
                     name="password"
-                    value={formData.password}
-                    onChange={handleChange}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                     placeholder="Optional"
+                    disabled={starting}
                   />
                   <button
                     type="button"
                     className="cs-eye"
-                    onClick={() => togglePassword("password")}
-                    aria-label="Toggle maker password visibility"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label="Toggle wallet password visibility"
                   >
-                    {showPassword.password ? (
-                      <EyeOff size={16} />
-                    ) : (
-                      <Eye size={16} />
-                    )}
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
               </Field>
             </div>
           </section>
 
-          <section className="cs-card cs-add-bitcoin">
+          <section className="cs-card">
             <div className="cs-card-head">
               <div>
-                <h2>Bitcoin connection</h2>
-                <p>Bitcoin Core RPC + ZMQ for chain state and notifications.</p>
+                <h2>Chain backend</h2>
+                <p>Where this maker gets its Bitcoin chain data from.</p>
               </div>
             </div>
             <div className="cs-card-body cs-field-grid">
-              <Field
-                label="Bitcoin RPC endpoint"
-                required
-                hint="Format: host:port"
-                className="cs-span-2"
-              >
-                <input
-                  className="cs-input"
-                  name="bitcoinRpc"
-                  value={formData.bitcoinRpc}
-                  onChange={handleChange}
-                  placeholder="127.0.0.1:38332"
-                  required
-                />
-              </Field>
+              <div className="cs-field cs-span-2">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={starting}
+                    onClick={() => setBackend("electrum")}
+                    className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+                      backend === "electrum"
+                        ? "bg-orange-600 text-white"
+                        : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                    }`}
+                  >
+                    Electrum
+                  </button>
+                  <button
+                    type="button"
+                    disabled={starting}
+                    onClick={() => setBackend("bitcoind")}
+                    className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+                      backend === "bitcoind"
+                        ? "bg-orange-600 text-white"
+                        : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                    }`}
+                  >
+                    Bitcoin Core
+                  </button>
+                </div>
+                <p className="cs-hint">
+                  {backend === "electrum"
+                    ? "Uses a hosted Electrum server — no local node needed."
+                    : "Uses your own Bitcoin Core node via RPC + ZMQ."}
+                </p>
+              </div>
 
-              <Field label="RPC username" required>
-                <input
-                  className="cs-input"
-                  name="bitcoinUser"
-                  value={formData.bitcoinUser}
-                  onChange={handleChange}
-                  placeholder="user"
-                  required
-                />
-              </Field>
-
-              <Field label="RPC password" required>
-                <div className="cs-input-wrap">
-                  <input
-                    className="cs-input"
-                    type={passwordType("bitcoinPassword")}
-                    name="bitcoinPassword"
-                    value={formData.bitcoinPassword}
-                    onChange={handleChange}
-                    placeholder="password"
+              {backend === "bitcoind" && (
+                <>
+                  <Field
+                    label="Bitcoin RPC endpoint"
                     required
-                  />
-                  <button
-                    type="button"
-                    className="cs-eye"
-                    onClick={() => togglePassword("bitcoinPassword")}
-                    aria-label="Toggle RPC password visibility"
+                    hint="Format: host:port"
+                    className="cs-span-2"
                   >
-                    {showPassword.bitcoinPassword ? (
-                      <EyeOff size={16} />
-                    ) : (
-                      <Eye size={16} />
-                    )}
-                  </button>
-                </div>
-              </Field>
+                    <input
+                      className="cs-input"
+                      name="bitcoinRpc"
+                      value={bitcoinRpc}
+                      onChange={(e) => setBitcoinRpc(e.target.value)}
+                      placeholder="127.0.0.1:38332"
+                      disabled={starting}
+                      required
+                    />
+                  </Field>
 
-              <Field
-                label="ZMQ endpoint"
-                required
-                hint="Subscribe to rawblock + rawtx notifications."
-                className="cs-span-2"
-              >
-                <input
-                  className="cs-input"
-                  name="zmq"
-                  value={formData.zmq}
-                  onChange={handleChange}
-                  placeholder="tcp://127.0.0.1:28332"
-                  required
-                />
-              </Field>
-            </div>
-          </section>
+                  <Field label="RPC username" required>
+                    <input
+                      className="cs-input"
+                      name="bitcoinUser"
+                      value={bitcoinUser}
+                      onChange={(e) => setBitcoinUser(e.target.value)}
+                      placeholder="user"
+                      disabled={starting}
+                      required
+                    />
+                  </Field>
 
-          <section className="cs-card cs-add-tor">
-            <div className="cs-card-head">
-              <div>
-                <h2>Tor configuration</h2>
-                <p>
-                  Ports must match your Tor instance. Auth password is required
-                  if your control port uses <code>HashedControlPassword</code>.
-                </p>
-              </div>
-            </div>
-            <div className="cs-card-body cs-field-grid">
-              <Field label="SOCKS port" required>
-                <input
-                  className="cs-input"
-                  type="number"
-                  name="socksPort"
-                  value={formData.socksPort}
-                  onChange={handleChange}
-                  placeholder="9050"
-                />
-              </Field>
+                  <Field label="RPC password" required>
+                    <div className="cs-input-wrap">
+                      <input
+                        className="cs-input"
+                        type={showRpcPassword ? "text" : "password"}
+                        name="bitcoinPassword"
+                        value={bitcoinPassword}
+                        onChange={(e) => setBitcoinPassword(e.target.value)}
+                        placeholder="password"
+                        disabled={starting}
+                        required
+                      />
+                      <button
+                        type="button"
+                        className="cs-eye"
+                        onClick={() => setShowRpcPassword((v) => !v)}
+                        aria-label="Toggle RPC password visibility"
+                      >
+                        {showRpcPassword ? (
+                          <EyeOff size={16} />
+                        ) : (
+                          <Eye size={16} />
+                        )}
+                      </button>
+                    </div>
+                  </Field>
 
-              <Field label="Control port" required>
-                <input
-                  className="cs-input"
-                  type="number"
-                  name="controlPort"
-                  value={formData.controlPort}
-                  onChange={handleChange}
-                  placeholder="9051"
-                />
-              </Field>
-
-              <Field
-                label="Tor auth password"
-                optional
-                hint="Leave blank if no auth configured."
-                className="cs-span-2"
-              >
-                <div className="cs-input-wrap">
-                  <input
-                    className="cs-input"
-                    type={passwordType("torAuth")}
-                    name="torAuth"
-                    value={formData.torAuth}
-                    onChange={handleChange}
-                    placeholder="Optional"
-                  />
-                  <button
-                    type="button"
-                    className="cs-eye"
-                    onClick={() => togglePassword("torAuth")}
-                    aria-label="Toggle Tor auth visibility"
+                  <Field
+                    label="ZMQ endpoint"
+                    required
+                    hint="Subscribe to rawblock + rawtx notifications."
+                    className="cs-span-2"
                   >
-                    {showPassword.torAuth ? (
-                      <EyeOff size={16} />
-                    ) : (
-                      <Eye size={16} />
-                    )}
-                  </button>
+                    <input
+                      className="cs-input"
+                      name="zmq"
+                      value={zmq}
+                      onChange={(e) => setZmq(e.target.value)}
+                      placeholder="tcp://127.0.0.1:28332"
+                      disabled={starting}
+                      required
+                    />
+                  </Field>
+                </>
+              )}
+            </div>
+          </section>
+
+          {checksStarted && (
+            <section className="cs-card cs-add-prechecks">
+              <div className="cs-card-head">
+                <div>
+                  <h2>Startup checks</h2>
+                  <p>Verifying connectivity before the maker starts.</p>
                 </div>
-              </Field>
-            </div>
-          </section>
-
-          <section className="cs-card cs-add-ports">
-            <div className="cs-card-head">
-              <div>
-                <h2>Maker network ports</h2>
-                <p>
-                  Ports this maker listens on. Must be unique across all makers
-                  running locally.
-                </p>
               </div>
-            </div>
-            <div className="cs-card-body cs-field-grid">
-              <Field
-                label="Network port"
-                required
-                hint={
-                  loadingPorts
-                    ? "Finding an available port."
-                    : "Used by takers to connect."
-                }
-              >
-                <input
-                  className="cs-input"
-                  name="networkPort"
-                  value={formData.networkPort}
-                  readOnly
-                  placeholder={
-                    loadingPorts ? "Loading..." : "Assigned automatically"
-                  }
-                />
-              </Field>
-
-              <Field
-                label="RPC port"
-                required
-                hint={
-                  loadingPorts
-                    ? "Finding an available port."
-                    : "Used by maker-cli."
-                }
-              >
-                <input
-                  className="cs-input"
-                  name="makerRpcPort"
-                  value={formData.makerRpcPort}
-                  readOnly
-                  placeholder={
-                    loadingPorts ? "Loading..." : "Assigned automatically"
-                  }
-                />
-              </Field>
-
-              <Field
-                label="Required confirmations"
-                required
-                hint="Funding confirmations required before swaps continue."
-                className="cs-span-2"
-              >
-                <input
-                  className="cs-input"
-                  type="number"
-                  min="0"
-                  name="requiredConfirms"
-                  value={formData.requiredConfirms}
-                  onChange={handleChange}
-                />
-              </Field>
-            </div>
-          </section>
-
-          <section className="cs-card cs-add-prechecks">
-            <div className="cs-card-head">
-              <div>
-                <h2>Pre-checks</h2>
-                <p>
-                  Run a live check against your current Bitcoin Core and Tor
-                  settings before adding the maker.
-                </p>
+              <div className="cs-card-body">
+                <div className="cs-add-checks">
+                  {activeChecks.map((row) => (
+                    <CheckRow
+                      key={row.id}
+                      row={row}
+                      state={checks[row.id] ?? { status: "idle" }}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-            <div className="cs-card-body">
-              <div className="cs-add-checks">
-                {CHECKS.map((row) => (
-                  <CheckRow
-                    key={row.id}
-                    row={row}
-                    state={checks[row.id]}
-                    onRun={() => void runCheck(row.id)}
-                  />
-                ))}
-              </div>
-            </div>
-            <div className="cs-add-check-footer">
-              <span>
-                {CHECKS.length} checks ·{" "}
-                {passedCount > 0 ? `${passedCount} passed` : "not run"}
-              </span>
-              <button
-                type="button"
-                className={`cs-btn primary ${isRunningAll ? "spin" : ""}`}
-                disabled={isRunningAll}
-                onClick={() => void runAllChecks()}
-              >
-                <RefreshCw size={15} />
-                {isRunningAll ? "Testing..." : "Test all"}
-              </button>
-            </div>
-          </section>
+            </section>
+          )}
 
           <div className="cs-add-actions">
             <Link to="/" className="cs-btn ghost">
               Cancel
             </Link>
-            <button
-              type="submit"
-              className="cs-btn primary"
-              disabled={submitting || loadingPorts}
-            >
-              <Plus size={18} />
-              {submitting
-                ? "Adding maker..."
-                : loadingPorts
-                  ? "Assigning ports..."
-                  : "Add maker"}
+            <button type="submit" className="cs-btn primary" disabled={starting}>
+              {starting ? (
+                <LoaderCircle size={18} className="cs-spin" />
+              ) : (
+                <Play size={18} />
+              )}
+              {starting ? "Starting maker..." : "Start maker"}
             </button>
           </div>
         </form>

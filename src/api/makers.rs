@@ -16,7 +16,7 @@ use super::{
     },
     AppState,
 };
-use crate::maker_manager::{MakerConfig, MakerManager, MakerManagerError};
+use crate::maker_manager::{MakerBackend, MakerConfig, MakerManager, MakerManagerError};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -203,9 +203,12 @@ async fn create_maker(
         );
     }
 
+    // The Electrum backend (see maker_manager::ELECTRUM_URL) needs no local
+    // node; the bitcoind backend requires Bitcoin Core RPC credentials.
+    let backend = body.backend.unwrap_or(MakerBackend::Electrum);
     let auth = match (body.rpc_user, body.rpc_password) {
         (Some(u), Some(p)) => Some((u, p)),
-        _ => {
+        _ if backend == MakerBackend::Bitcoind => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(ApiResponse::err(
@@ -213,9 +216,11 @@ async fn create_maker(
                 )),
             );
         }
+        _ => None,
     };
 
     let mut config = MakerConfig {
+        backend,
         auth,
         data_directory: body.data_directory.map(PathBuf::from),
         rpc: body.rpc.unwrap_or_else(|| "127.0.0.1:38332".to_string()),

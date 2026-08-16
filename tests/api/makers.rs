@@ -5,7 +5,7 @@ use std::net::TcpListener;
 use axum::http::StatusCode;
 use serde_json::json;
 
-use super::{delete, get, post, put, test_app};
+use super::{delete, get, post, put, temp_config_dir, test_app};
 
 // 200 / success-path
 
@@ -108,7 +108,7 @@ async fn list_and_count_stay_empty_after_failed_create() {
     post(
         app.clone(),
         "/makers",
-        json!({ "id": "fail", "rpc_user": "u", "rpc_password": "p", "rpc": "127.0.0.1:19998", "zmq": "tcp://127.0.0.1:19997" }),
+        json!({ "id": "fail", "backend": "bitcoind", "rpc_user": "u", "rpc_password": "p", "rpc": "127.0.0.1:19998", "zmq": "tcp://127.0.0.1:19997", "data_directory": temp_config_dir() }),
     )
     .await;
 
@@ -121,6 +121,20 @@ async fn list_and_count_stay_empty_after_failed_create() {
     assert_eq!(count_body["data"], 0);
 }
 
+// electrum backend (default): no node or credentials needed
+
+#[tokio::test]
+async fn create_with_electrum_backend_succeeds_without_credentials() {
+    let (status, body) = post(
+        test_app(),
+        "/makers",
+        json!({ "id": "test", "data_directory": temp_config_dir() }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(body["success"].as_bool().unwrap());
+}
+
 // validation errors (400)
 
 #[tokio::test]
@@ -128,7 +142,7 @@ async fn create_without_credentials_is_400() {
     let (status, body) = post(
         test_app(),
         "/makers",
-        json!({ "id": "test", "rpc": "127.0.0.1:18332", "zmq": "tcp://127.0.0.1:28332" }),
+        json!({ "id": "test", "backend": "bitcoind", "rpc": "127.0.0.1:18332", "zmq": "tcp://127.0.0.1:28332" }),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -144,21 +158,21 @@ async fn create_with_only_rpc_user_is_400() {
     let (status, body) = post(
         test_app(),
         "/makers",
-        json!({ "id": "test", "rpc_user": "alice" }),
+        json!({ "id": "test", "backend": "bitcoind", "rpc_user": "alice" }),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(!body["success"].as_bool().unwrap());
 }
 
-// 500 when Bitcoin is unavailable
+// 500 when Bitcoin is unavailable (bitcoind backend)
 
 #[tokio::test]
 async fn create_with_credentials_returns_500_without_bitcoin() {
     let (status, body) = post(
         test_app(),
         "/makers",
-        json!({ "id": "test", "rpc_user": "alice", "rpc_password": "pass", "rpc": "127.0.0.1:19998", "zmq": "tcp://127.0.0.1:19997" }),
+        json!({ "id": "test", "backend": "bitcoind", "rpc_user": "alice", "rpc_password": "pass", "rpc": "127.0.0.1:19998", "zmq": "tcp://127.0.0.1:19997", "data_directory": temp_config_dir() }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -176,9 +190,11 @@ async fn create_skips_taken_local_network_port() {
         "/makers",
         json!({
             "id": "test",
+            "backend": "bitcoind",
             "rpc_user": "alice",
             "rpc_password": "pass",
             "network_port": port,
+            "data_directory": temp_config_dir(),
         }),
     )
     .await;
@@ -201,9 +217,11 @@ async fn create_skips_taken_local_rpc_port() {
         "/makers",
         json!({
             "id": "test",
+            "backend": "bitcoind",
             "rpc_user": "alice",
             "rpc_password": "pass",
             "rpc_port": port,
+            "data_directory": temp_config_dir(),
         }),
     )
     .await;

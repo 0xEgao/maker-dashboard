@@ -7,7 +7,12 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 
 use super::maker_pool::MakerId;
-use super::MakerConfig;
+use super::{MakerBackend, MakerConfig};
+
+/// Configs persisted before the backend toggle existed ran on Bitcoin Core.
+fn default_backend() -> MakerBackend {
+    MakerBackend::Bitcoind
+}
 
 fn default_network_port() -> u16 {
     6102
@@ -45,6 +50,8 @@ fn default_required_confirms() -> u32 {
 /// On-disk representation of a single maker's config.
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredMakerConfig {
+    #[serde(default = "default_backend")]
+    backend: MakerBackend,
     data_directory: Option<String>,
     rpc: String,
     zmq: String,
@@ -86,6 +93,7 @@ impl From<&MakerConfig> for StoredMakerConfig {
             None => (None, None),
         };
         Self {
+            backend: c.backend,
             data_directory: c.data_directory.as_ref().map(|p| p.display().to_string()),
             rpc: c.rpc.clone(),
             zmq: c.zmq.clone(),
@@ -113,6 +121,7 @@ impl From<&MakerConfig> for StoredMakerConfig {
 impl From<StoredMakerConfig> for MakerConfig {
     fn from(s: StoredMakerConfig) -> Self {
         Self {
+            backend: s.backend,
             data_directory: s.data_directory.map(PathBuf::from),
             rpc: s.rpc,
             zmq: s.zmq,

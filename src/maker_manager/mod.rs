@@ -16,12 +16,29 @@ use message::{MessageRequest, MessageResponse};
 use openswap::bitcoin::Network;
 use openswap::bitcoind::bitcoincore_rpc::Auth;
 use openswap::maker::{MakerServer, MakerServerConfig};
-use openswap::wallet::{BackendConfig, CoreRpcConfig};
+use openswap::wallet::{BackendConfig, CoreRpcConfig, ElectrumConfig};
 use persistence::{DashboardSettings, PersistenceManager};
+use serde::{Deserialize, Serialize};
+
+/// Electrum server makers use for chain data when running with the Electrum
+/// backend. Hardcoded — the onboarding flow does not collect node settings.
+pub const ELECTRUM_URL: &str = "tcp://170.75.166.88:50001";
+
+/// Chain-data backend a maker uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MakerBackend {
+    /// Local Bitcoin Core node via RPC + ZMQ.
+    Bitcoind,
+    /// Hardcoded Electrum server ([`ELECTRUM_URL`]); no local node needed.
+    Electrum,
+}
 
 /// Configuration for creating a new maker.
 #[derive(Debug, Clone)]
 pub struct MakerConfig {
+    /// Chain-data backend. Default: Electrum.
+    pub backend: MakerBackend,
     /// Optional data directory. Default: `~/.openswap/<id>`
     pub data_directory: Option<PathBuf>,
     /// Bitcoin Core RPC network address (e.g. "127.0.0.1:38332")
@@ -53,6 +70,7 @@ pub struct MakerConfig {
 impl Default for MakerConfig {
     fn default() -> Self {
         Self {
+            backend: MakerBackend::Electrum,
             data_directory: None,
             rpc: "127.0.0.1:38332".to_string(),
             zmq: "tcp://127.0.0.1:28332".to_string(),
@@ -372,10 +390,6 @@ impl MakerManager {
         config: MakerConfig,
         persist: bool,
     ) -> Result<()> {
-        let (user, pass) = config.auth.clone().ok_or_else(|| {
-            anyhow!("RPC authentication credentials must be provided in MakerConfig.auth")
-        })?;
-
         let mut config = Self::normalize_config(&id, config);
         if config.data_directory.is_none() {
             let maker_dir = Self::default_maker_data_dir(&id);
@@ -383,12 +397,25 @@ impl MakerManager {
             config.data_directory = Some(maker_dir);
         }
 
-        let backend = BackendConfig::CoreRpc(CoreRpcConfig {
-            url: config.rpc.clone(),
-            auth: Auth::UserPass(user, pass),
-            wallet_name: config.wallet_name.clone().unwrap_or_else(|| id.clone()),
-            zmq_addr: config.zmq.clone(),
-        });
+        let backend = match config.backend {
+            MakerBackend::Electrum => BackendConfig::Electrum(ElectrumConfig {
+                url: ELECTRUM_URL.to_string(),
+                ..Default::default()
+            }),
+            MakerBackend::Bitcoind => {
+                let (user, pass) = config.auth.clone().ok_or_else(|| {
+                    anyhow!(
+                        "RPC authentication credentials must be provided for the bitcoind backend"
+                    )
+                })?;
+                BackendConfig::CoreRpc(CoreRpcConfig {
+                    url: config.rpc.clone(),
+                    auth: Auth::UserPass(user, pass),
+                    wallet_name: config.wallet_name.clone().unwrap_or_else(|| id.clone()),
+                    zmq_addr: config.zmq.clone(),
+                })
+            }
+        };
 
         let data_dir = config
             .data_directory

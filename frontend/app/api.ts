@@ -16,9 +16,12 @@ export interface MakerInfo {
 
 export type MakerState = "running" | "stopped";
 
+export type MakerBackend = "bitcoind" | "electrum";
+
 export interface MakerInfoDetailed {
   id: string;
   state: MakerState;
+  backend: MakerBackend;
   rpc: string;
   zmq: string;
   rpc_user: string;
@@ -84,7 +87,13 @@ export interface RpcStatusInfo {
   sync_progress?: number;
 }
 
-export type StartupCheckKind = "bitcoin" | "rpc" | "rest" | "zmq" | "tor";
+export type StartupCheckKind =
+  | "bitcoin"
+  | "rpc"
+  | "rest"
+  | "zmq"
+  | "tor"
+  | "electrum";
 
 export interface StartupCheckRequest {
   check: StartupCheckKind;
@@ -169,6 +178,7 @@ export interface SwapReportDto {
 
 export interface CreateMakerRequest {
   id: string;
+  backend?: MakerBackend;
   rpc?: string;
   zmq?: string;
   rpc_user?: string;
