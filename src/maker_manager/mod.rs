@@ -377,7 +377,6 @@ impl MakerManager {
             time_relative_fee_pct: config.time_relative_fee_pct,
             min_swap_amount: config.min_swap_amount,
             required_confirms: config.required_confirms,
-            supported_protocols: MakerServerConfig::default().supported_protocols,
             fidelity_amount: config.fidelity_amount,
             fidelity_timelock: config.fidelity_timelock,
             fidelity_feerate: config.fidelity_feerate,
@@ -390,7 +389,7 @@ impl MakerManager {
             // Moved into core's config; our own `Zeroizing` copy is zeroed on
             // return from this function.
             password: password.as_ref().map(|p| p.as_str().to_string()),
-            nostr_relays: MakerServerConfig::default().nostr_relays,
+            ..Default::default()
         };
         let maker = Arc::new(Self::init_maker_server(server_config)?);
         self.pool
